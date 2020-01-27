@@ -1,0 +1,107 @@
+---
+title: "Data Prep Ovulatory cycle phases FAM"
+author: "Laura Symul"
+date: "11/7/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+To estimate the parameters of the gamma distributions, we will use the data from Kindara from the FAM paper
+
+
+```{r hsmm load Kindara data from FAM paper}
+
+kindara_agg_file = paste0(IO$tmp_data,"FAM_kindara_hmm_states_agg.feather")
+
+if(!file.exists(kindara_agg_file) | FALSE){
+  
+  load(paste0(IO$FAM_paper_kindara_data,"Cycles/06 CYCLES with reliable ovulation estimation.Rdata"), verbose = TRUE)
+  
+  days_input_folder = paste0(IO$FAM_paper_kindara_data,"Days/05 post HMM/")
+  days_files = list.files(days_input_folder)
+  days_feather_output_folder = paste0(IO$FAM_paper_kindara_data,"Days/05 post HMM feather/")
+  if(!dir.exists(days_feather_output_folder)){dir.create(days_feather_output_folder, recursive = TRUE)}
+  tmp_agg_folder = paste0(IO$tmp_data,"FAM_kindara_states_agg/")
+  if(!dir.exists(tmp_agg_folder)){dir.create(tmp_agg_folder, recursive = TRUE)}
+  
+  
+  for(file in days_files){
+    cat(file, "\n")
+    load(paste0(days_input_folder, file), verbose = TRUE)
+    
+    days$n_days = 1
+    agg = aggregate(n_days ~ cycle_id + states, days, sum)
+    
+    write_feather(agg, path = paste0(tmp_agg_folder,gsub("Rdata","feather",paste0("agg_",file))))
+    
+    j = which(colnames(days) == "n_days")
+    if(length(j)==1){days = days[,-j]}
+    
+    feather_file_name = gsub("Rdata","feather",file)
+    write_feather(days, path = paste0(days_feather_output_folder,feather_file_name))
+  }
+  
+  agg_files = list.files(tmp_agg_folder)
+  agg = foreach(agg_file = agg_files, .combine = rbind) %do% {this_agg = read_feather(path = paste0(tmp_agg_folder,agg_file));return(this_agg)}
+  write_feather(agg, path = kindara_agg_file)
+  
+}else{
+  agg = read_feather(path = kindara_agg_file)
+}
+
+
+```
+
+
+```{r hsmm combining HMM states to states of the hsmm}
+
+FAM_agg_sojourn_file = paste0(IO$tmp_data,"FAM_kindara_hsmm_states_agg.feather")
+
+if(!file.exists(FAM_agg_sojourn_file) | FALSE){
+  
+  unique(agg$states)
+  agg$hsmm_states  = agg$states
+  
+  # menses
+  agg$hsmm_states = gsub("hM","M",agg$hsmm_states)
+  agg$hsmm_states = gsub("lM","M",agg$hsmm_states)
+  
+  # Luteal
+  agg$hsmm_states = gsub("Rise","Lut",agg$hsmm_states)
+  agg$hsmm_states = gsub("Ep","Lut",agg$hsmm_states)
+  agg$hsmm_states = gsub("lP","Lut",agg$hsmm_states)
+  agg$hsmm_states = gsub("hP","Lut",agg$hsmm_states)
+  
+  FAM_agg_sojourn = aggregate(n_days ~ cycle_id + hsmm_states , agg, sum)
+  
+  cycles_out = FAM_agg_sojourn$cycle_id[which((FAM_agg_sojourn$n_days == 2)&(FAM_agg_sojourn$hsmm_states == "Lut"))]
+  j = which(!(FAM_agg_sojourn$cycle_id %in% cycles_out))
+  FAM_agg_sojourn = FAM_agg_sojourn[j,]
+  
+  write_feather(FAM_agg_sojourn, path = FAM_agg_sojourn_file)
+}else{
+  FAM_agg_sojourn = read_feather(path = FAM_agg_sojourn_file)
+}
+
+
+
+ggplot(FAM_agg_sojourn[j,], aes(x = n_days, fill = hsmm_states))+
+  geom_histogram(position = "identity", binwidth = 1)+
+  facet_grid(hsmm_states ~ ., scale = "free")+
+  xlim(c(0,50))
+
+
+ggplot(FAM_agg_sojourn, aes(x = n_days, fill = hsmm_states))+
+  geom_histogram(position = "identity", binwidth = 1)+
+  facet_grid(hsmm_states ~ ., scale = "free")+
+  xlim(c(0,50))
+
+```
+

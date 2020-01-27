@@ -1,0 +1,1048 @@
+---
+title: 'HsMm: emission probabilities'
+author: "Laura Symul"
+date: "11/7/2019"
+output: html_document
+---
+
+
+
+
+
+```{r hsmm_em load state specifications}
+load(file = paste0(IO$tmp_data, "hsmm.Rdata"), verbose = TRUE)
+```
+
+
+## Emission probabilities
+
+We have several input variables:
+
+1. bleeding  ---ok
+
+2. normalized temperature ---ok
+
+3. mucus score ---ok
+
+4. pregnancy tests [0 / 1] ---ok
+
+5. LH tests [0 / 1] ---ok
+
+6. first day [0/1] ---ok
+
+7. bleeding density over next 5 days -- ok
+
+8. bleeding density over next 90 days -- ok
+
+9. max autocorrelation score of bleeding for lags of 23 to 45 days -- ok
+
+10. pregnancy hint -- ok
+
+11. observation density
+
+
+```{r hsmm_em observations}
+obs_names = c("bleeding","LH","mucus", "temp", "preg","acf","preg_hint","obs_dens","d1","bleeding_density_5d","bleeding_density_90d")
+hsmm$n_obs = 8
+j = 1:hsmm$n_obs
+hsmm$obs_names = obs_names[j]
+```
+
+
+We need to define probabilities for each of these variables in each state. These probabilities are defined as multi-variate normals.
+
+We will initially assume that the co-variances are 0, so each observation is described as a normal with a mean and sigma.
+
+### Initial values for emission probabilities
+
+We will initially assume that the co-variances are 0, so each observation is described as a normal with a mean and sigma.
+
+The values of these parameters are informed by prior biological knowledge.
+
+#### Bleeding
+
+```{r hsmm_em bleeding, echo=FALSE}
+
+bleeding_type = "norm"
+
+bleeding_mean = c()
+bleeding_sd = c()
+# menses
+bleeding_mean = c(bleeding_mean, 1)
+bleeding_sd = c(bleeding_sd, 0.5)
+# lE
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.2)
+# hE
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.2)
+# preO
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.2)
+# O
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.5)
+# postO
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.5)
+# lut
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.25)
+# P
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.25)
+# PL
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.5)
+# L
+bleeding_mean = c(bleeding_mean, 1)
+bleeding_sd = c(bleeding_sd, 0.4)
+# PB1
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.5)
+# PB2
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.25)
+# PB3
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.5)
+# B
+bleeding_mean = c(bleeding_mean, 0.5)
+bleeding_sd = c(bleeding_sd, 0.5)
+# PP
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.4)
+# BF
+bleeding_mean = c(bleeding_mean, 0)
+bleeding_sd = c(bleeding_sd, 0.2)
+# ano
+bleeding_mean = c(bleeding_mean, 0.25)
+bleeding_sd = c(bleeding_sd, 0.5)
+```
+
+```{r}
+bleeding_mean 
+bleeding_sd 
+```
+
+
+#### LH test
+
+```{r hsmm_em LH, echo = FALSE}
+
+LH_type = "binom"
+LH_size = rep(1, hsmm$n_states)
+LH_prob = c()
+
+# menses
+LH_prob = c(LH_prob, 0.1)
+# lE
+LH_prob = c(LH_prob, 0.1)
+# hE
+LH_prob = c(LH_prob, 0.5)
+# preO
+LH_prob = c(LH_prob, 0.9)
+# O
+LH_prob = c(LH_prob, 0.9)
+# postO
+LH_prob = c(LH_prob, 0.1)
+# lut
+LH_prob = c(LH_prob, 0.1)
+# P
+LH_prob = c(LH_prob, 0.5)
+# PL
+LH_prob = c(LH_prob, 0.5)
+# L
+LH_prob = c(LH_prob, 0.1)
+# PB1
+LH_prob = c(LH_prob, 0.5)
+# PB2
+LH_prob = c(LH_prob, 0.5)
+# PB3
+LH_prob = c(LH_prob, 0.5)
+# B
+LH_prob = c(LH_prob, 0.1)
+# PP
+LH_prob = c(LH_prob, 0.1)
+# BF
+LH_prob = c(LH_prob, 0.1)
+# ano
+LH_prob = c(LH_prob, 0.5)
+```
+
+```{r}
+LH_prob
+```
+
+#### Cervical Mucus
+
+```{r hsmm_em mucus, echo=FALSE}
+
+mucus_type = "norm"
+mucus_mean = c()
+mucus_sd = c()
+
+# menses
+mucus_mean = c(mucus_mean, 0)
+mucus_sd = c(mucus_sd,0.1)
+# lE
+mucus_mean = c(mucus_mean, 0)
+mucus_sd = c(mucus_sd,0.25)
+# hE
+mucus_mean = c(mucus_mean, 1)
+mucus_sd = c(mucus_sd,0.4)
+# preO
+mucus_mean = c(mucus_mean, 1)
+mucus_sd = c(mucus_sd,0.5)
+# O
+mucus_mean = c(mucus_mean, 1)
+mucus_sd = c(mucus_sd,0.5)
+# postO
+mucus_mean = c(mucus_mean, 0.25)
+mucus_sd = c(mucus_sd,0.5)
+# lut
+mucus_mean = c(mucus_mean, 0)
+mucus_sd = c(mucus_sd,0.5)
+# P
+mucus_mean = c(mucus_mean, 0)
+mucus_sd = c(mucus_sd,0.5)
+# PL
+mucus_mean = c(mucus_mean, 0.5)
+mucus_sd = c(mucus_sd,0.5)
+# L
+mucus_mean = c(mucus_mean, 0)
+mucus_sd = c(mucus_sd,0.5)
+# PB1
+mucus_mean = c(mucus_mean, 1)
+mucus_sd = c(mucus_sd,0.5)
+# PB2
+mucus_mean = c(mucus_mean, 1)
+mucus_sd = c(mucus_sd,0.5)
+# PB3
+mucus_mean = c(mucus_mean, 1)
+mucus_sd = c(mucus_sd,0.5)
+# B
+mucus_mean = c(mucus_mean, 0)
+mucus_sd = c(mucus_sd,0.5)
+# PP
+mucus_mean = c(mucus_mean, 0)
+mucus_sd = c(mucus_sd,0.5)
+# BF
+mucus_mean = c(mucus_mean, 0)
+mucus_sd = c(mucus_sd,0.5)
+# ano
+mucus_mean = c(mucus_mean, 0.25)
+mucus_sd = c(mucus_sd,0.5)
+
+```
+
+```{r}
+mucus_mean 
+mucus_sd
+```
+
+
+
+#### Body temperature at wake-up
+
+```{r hsmm_em temp, echo=FALSE}
+
+temp_type = "norm"
+temp_mean = c()
+temp_sd = c()
+
+# menses
+temp_mean = c(temp_mean, 0)
+temp_sd = c(temp_sd,0.5)
+# lE
+temp_mean = c(temp_mean, -0.3)
+temp_sd = c(temp_sd,0.25)
+# hE
+temp_mean = c(temp_mean, -0.3)
+temp_sd = c(temp_sd,0.2)
+# preO
+temp_mean = c(temp_mean, -0.3)
+temp_sd = c(temp_sd,0.2)
+# O
+temp_mean = c(temp_mean, 0)
+temp_sd = c(temp_sd,0.2)
+# postO
+temp_mean = c(temp_mean, 0.3)
+temp_sd = c(temp_sd,0.2)
+# lut
+temp_mean = c(temp_mean, 0.6)
+temp_sd = c(temp_sd,0.2)
+# P
+temp_mean = c(temp_mean, 0.7)
+temp_sd = c(temp_sd,0.2)
+# PL
+temp_mean = c(temp_mean, 0.6)
+temp_sd = c(temp_sd,0.3)
+# L
+temp_mean = c(temp_mean, 0)
+temp_sd = c(temp_sd,0.5)
+# PB1
+temp_mean = c(temp_mean, 1)
+temp_sd = c(temp_sd,0.3)
+# PB2
+temp_mean = c(temp_mean, 0.5)
+temp_sd = c(temp_sd,0.5)
+# PB3
+temp_mean = c(temp_mean, 0.25)
+temp_sd = c(temp_sd,0.5)
+# B
+temp_mean = c(temp_mean, 0)
+temp_sd = c(temp_sd,0.5)
+# PP
+temp_mean = c(temp_mean, -0.3)
+temp_sd = c(temp_sd,0.5)
+# BF
+temp_mean = c(temp_mean, 0)
+temp_sd = c(temp_sd,0.5)
+# ano
+temp_mean = c(temp_mean, -0.3)
+temp_sd = c(temp_sd,0.3)
+
+```
+
+```{r}
+temp_mean
+temp_sd 
+```
+
+
+#### Pregnancy tests
+
+```{r hsmm_em preg test, echo = FALSE}
+
+preg_type = "binom"
+preg_size = rep(1, hsmm$n_states)
+preg_prob = c()
+
+# menses
+preg_prob = c(preg_prob, 0.1)
+# lE
+preg_prob = c(preg_prob, 0.1)
+# hE
+preg_prob = c(preg_prob, 0.1)
+# preO
+preg_prob = c(preg_prob, 0.1)
+# O
+preg_prob = c(preg_prob, 0.1)
+# postO
+preg_prob = c(preg_prob, 0.1)
+# lut
+preg_prob = c(preg_prob, 0.1)
+# P
+preg_prob = c(preg_prob, 0.9)
+# PL
+preg_prob = c(preg_prob, 0.9)
+# L
+preg_prob = c(preg_prob, 0.1)
+# PB1
+preg_prob = c(preg_prob, 0.9)
+# PB2
+preg_prob = c(preg_prob, 0.9)
+# PB3
+preg_prob = c(preg_prob, 0.9)
+# B
+preg_prob = c(preg_prob, 0.1)
+# PP
+preg_prob = c(preg_prob, 0.1)
+# BF
+preg_prob = c(preg_prob, 0.1)
+# ano
+preg_prob = c(preg_prob, 0.1)
+
+```
+
+
+```{r}
+preg_prob 
+```
+
+
+#### First day (as defined by the app or logged by the user)
+
+```{r hsmm_em first day, echo=FALSE}
+d1_type = "norm"
+d1_mu = c()
+d1_sigma = c()
+# menses
+d1_mu = c(d1_mu, 1)
+d1_sigma = c(d1_sigma, 0.5)
+# lE
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.25)
+# hE
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.25)
+# preO
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.25)
+# O
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.5)
+# postO
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.25)
+# lut
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.25)
+# P
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 1)
+# PL
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.5)
+# L
+d1_mu = c(d1_mu, 1)
+d1_sigma = c(d1_sigma, 0.5)
+# PB1
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.5)
+# PB2
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.5)
+# PB3
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.5)
+# B
+d1_mu = c(d1_mu, 1)
+d1_sigma = c(d1_sigma, 0.5)
+# PP
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.5)
+# BF
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.25)
+# ano
+d1_mu = c(d1_mu, 0)
+d1_sigma = c(d1_sigma, 0.5)
+```
+
+```{r}
+d1_mu
+d1_sigma
+```
+
+#### Bleeding density 5 days
+
+```{r hsmm_em bleeding_density_5d, echo=FALSE}
+
+bleeding_density_5d_mu = c()
+bleeding_density_5d_sigma = c()
+# menses
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0.5)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.25)
+# lE
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.25)
+# hE
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.25)
+# preO
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# O
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# postO
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# lut
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0.25)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# P
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# PL
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# L
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0.75)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# PB1
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# PB2
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.25)
+# PB3
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# B
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0.75)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# PP
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# BF
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+# ano
+bleeding_density_5d_mu = c(bleeding_density_5d_mu, 0.25)
+bleeding_density_5d_sigma = c(bleeding_density_5d_sigma, 0.5)
+```
+
+```{r}
+bleeding_density_5d_mu 
+bleeding_density_5d_sigma 
+```
+
+
+#### Bleeding density 90 days
+
+```{r hsmm_em bleeding_density_9d, echo=FALSE}
+
+bleeding_density_90d_mu = c()
+bleeding_density_90d_sigma = c()
+# menses
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# lE
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# hE
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# preO
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# O
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# postO
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# lut
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# P
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.5)
+# PL
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# L
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# PB1
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# PB2
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# PB3
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.1)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+# B
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.5)
+# PP
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.5)
+# BF
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.5)
+# ano
+bleeding_density_90d_mu = c(bleeding_density_90d_mu, 0.15)
+bleeding_density_90d_sigma = c(bleeding_density_90d_sigma, 0.25)
+```
+
+```{r}
+bleeding_density_90d_mu 
+bleeding_density_90d_sigma 
+```
+
+
+
+#### Max autocorrelation score for bleeding density 5days for lags between 23 and 45 days
+
+```{r hsmm_em acf, echo=FALSE}
+
+acf_type = "norm"
+
+acf_high = 0.6
+
+acf_mean = c()
+acf_sd= c()
+# menses
+acf_mean = c(acf_mean, acf_high)
+acf_sd = c(acf_sd, 0.25)
+# lE
+acf_mean = c(acf_mean, acf_high/2)
+acf_sd = c(acf_sd, 0.5)
+# hE
+acf_mean = c(acf_mean, acf_high)
+acf_sd = c(acf_sd, 0.25)
+# preO
+acf_mean = c(acf_mean, acf_high)
+acf_sd = c(acf_sd, 0.25)
+# O
+acf_mean = c(acf_mean, acf_high)
+acf_sd = c(acf_sd, 0.25)
+# postO
+acf_mean = c(acf_mean, acf_high)
+acf_sd = c(acf_sd, 0.25)
+# lut
+acf_mean = c(acf_mean, acf_high)
+acf_sd = c(acf_sd, 0.25)
+# P
+acf_mean = c(acf_mean, acf_high/2)
+acf_sd = c(acf_sd, 0.5)
+# PL
+acf_mean = c(acf_mean, acf_high/2)
+acf_sd = c(acf_sd, 0.25)
+# L
+acf_mean = c(acf_mean, acf_high/2)
+acf_sd = c(acf_sd, 0.25)
+# PB1
+acf_mean = c(acf_mean, 0)
+acf_sd = c(acf_sd, 0.25)
+# PB2
+acf_mean = c(acf_mean, 0)
+acf_sd = c(acf_sd, 0.25)
+# PB3
+acf_mean = c(acf_mean, 0)
+acf_sd = c(acf_sd, 0.25)
+# B
+acf_mean = c(acf_mean, 0)
+acf_sd = c(acf_sd, 0.5)
+# PP
+acf_mean = c(acf_mean, acf_high/2)
+acf_sd = c(acf_sd, 0.5)
+# BF
+acf_mean = c(acf_mean, 0)
+acf_sd = c(acf_sd, 0.5)
+# ano
+acf_mean = c(acf_mean, acf_high/2)
+acf_sd = c(acf_sd, 0.25)
+```
+
+```{r}
+acf_mean 
+acf_sd 
+```
+
+#### Pregnancy "Hints""
+
+```{r hsmm_em preg hint, echo = FALSE}
+
+preg_hint_type = "binom"
+preg_hint_size = rep(1, hsmm$n_states)
+preg_hint_prob = c()
+
+# menses
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# lE
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# hE
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# preO
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# O
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# postO
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# lut
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# P
+preg_hint_prob = c(preg_hint_prob, 0.5)
+# PL
+preg_hint_prob = c(preg_hint_prob, 0.5)
+# L
+preg_hint_prob = c(preg_hint_prob, 0.5)
+# PB1
+preg_hint_prob = c(preg_hint_prob, 0.9)
+# PB2
+preg_hint_prob = c(preg_hint_prob, 0.9)
+# PB3
+preg_hint_prob = c(preg_hint_prob, 0.5)
+# B
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# PP
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# BF
+preg_hint_prob = c(preg_hint_prob, 0.1)
+# ano
+preg_hint_prob = c(preg_hint_prob, 0.1)
+```
+
+
+```{r}
+preg_hint_prob 
+```
+
+#### Observation density 5 days
+
+```{r hsmm_em obs_dens, echo=FALSE}
+
+obs_dens_type = "norm"
+
+obs_dens_mean = c()
+obs_dens_sd = c()
+
+
+high = 1
+low = high/3
+
+# menses
+obs_dens_mean = c(obs_dens_mean, high)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# lE
+obs_dens_mean = c(obs_dens_mean, low)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# hE
+obs_dens_mean = c(obs_dens_mean, low)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# preO
+obs_dens_mean = c(obs_dens_mean, low)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# O
+obs_dens_mean = c(obs_dens_mean, low)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# postO
+obs_dens_mean = c(obs_dens_mean, low)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# lut
+obs_dens_mean = c(obs_dens_mean, low)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# P
+obs_dens_mean = c(obs_dens_mean, high/2)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# PL
+obs_dens_mean = c(obs_dens_mean, low)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# L
+obs_dens_mean = c(obs_dens_mean, high/2)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# PB1
+obs_dens_mean = c(obs_dens_mean, low)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# PB2
+obs_dens_mean = c(obs_dens_mean, 0)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# PB3
+obs_dens_mean = c(obs_dens_mean, 0)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# B
+obs_dens_mean = c(obs_dens_mean, high/2)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# PP
+obs_dens_mean = c(obs_dens_mean, 0)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# BF
+obs_dens_mean = c(obs_dens_mean, 0)
+obs_dens_sd = c(obs_dens_sd, 0.5)
+# ano
+obs_dens_mean = c(obs_dens_mean, high)
+obs_dens_sd = c(obs_dens_sd, 0.25)
+```
+
+```{r}
+obs_dens_mean 
+obs_dens_sd 
+```
+
+
+```{r hsmm_em obs_dens, echo=FALSE}
+
+obs_dens_type = "non-par"
+
+obs_dens_values = seq(0,1,by = 0.2)
+
+# menses
+obs_dens_probs = c(0,1,1,1,1,1)
+# lE
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# hE
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# preO
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# O
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# postO
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# lut
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# P
+obs_dens_probs = cbind(obs_dens_probs,c(0.5,1,1,1,1,1))
+# PL
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# L
+obs_dens_probs = cbind(obs_dens_probs,c(0.5,1,1,1,1,1))
+# PB1
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# PB2
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# PB3
+obs_dens_probs = cbind(obs_dens_probs,rep(1,6))
+# B
+obs_dens_probs = cbind(obs_dens_probs,c(0.5,1,1,1,1,1))
+# PP
+obs_dens_probs = cbind(obs_dens_probs,c(1,1,0.5,0.5,0.5,0.5))
+# BF
+obs_dens_probs = cbind(obs_dens_probs,c(1,0.5,0.3,0.3,0.3,0.2))
+# ano
+obs_dens_probs = cbind(obs_dens_probs,c(0,0,0.1,0.5,0.8,1))
+```
+
+```{r}
+obs_dens_probs
+```
+
+
+### Adding the initial emission probabilities to the specified model
+
+
+```{r hsmm_em emissions formatting for model spec., echo=FALSE}
+
+hsmm$emission_par = list()
+
+for(obs_name in hsmm$obs_names){
+  eval(parse(text = str_c("type = ",obs_name,"_type")))
+  if(type == "norm"){
+    param = list(mean = eval(parse(text = str_c(obs_name,"_mean"))),
+                 sd = eval(parse(text = str_c(obs_name,"_sd"))))
+  }else if(type == "binom"){
+    param = list(size = eval(parse(text = str_c(obs_name,"_size"))),
+                 prob = eval(parse(text = str_c(obs_name,"_prob"))))
+  }else if(type == "non-par"){
+    param = list(values = eval(parse(text = str_c(obs_name,"_values"))),
+                 probs = eval(parse(text = str_c(obs_name,"_probs"))))
+  }else{
+    stop("This distribution has not been implemented yet")
+  }
+  
+  
+  hsmm$emission_par[[obs_name]] = list(
+    type = type,
+    param = param
+  )
+}
+
+hsmm$emission_par_init = hsmm$emission_par
+
+```
+
+
+```{r hsmm_em load the modified hsmm functions}
+
+source("Scripts/mhsmm_LSY/R/hsmm_functions.R")
+source("Scripts/mhsmm_LSY/R/spec_functions.R")
+
+```
+
+
+
+```{r hsmm_em emissions viz, echo=FALSE}
+
+N = 1000
+r_obs = foreach(state = 1:hsmm$n_states, .combine = rbind) %do%{
+  this_state_r_obs = generate_random_obs(n = N, parem = hsmm$emission_par, state = state) %>% 
+    as.data.frame() %>% set_colnames(hsmm$obs_names) %>% 
+    mutate(state_name =  hsmm$states$abbr[state], color = hsmm$state$colors[state],n = 1:N) %>% 
+    tidyr::pivot_longer(.,cols = hsmm$obs_names, names_to = "obs_name")
+  return(this_state_r_obs)
+}
+
+r_obs$state_name = factor(r_obs$state_name, levels = hsmm$states$abbr)
+r_obs$obs_name = factor(r_obs$obs_name, levels = hsmm$obs_names)
+
+
+g_par_init = ggplot(r_obs, aes(x = state_name, y = value, fill = color, col = color))+  
+  geom_violin(bw = 0.05)+
+  scale_color_identity()+scale_fill_identity()+
+  facet_grid( obs_name ~ ., scale = "free")
+
+g_par_init
+
+```
+
+
+
+
+### Emission probabilities from the manually labeled states
+
+While the initial emission probabilities are informed by prior knowledge, we want to also ensure that the emission parameters reflect what is observed in the manually labelled dataset.
+
+```{r hsmm_em loading labels and data}
+
+labels = read_feather(path = paste0(IO$output_data, "manual_labels.feather"))
+days = read_feather(path = paste0(IO$tmp_data, "days_selected_users.feather"))
+
+
+obs = foreach(user = unique(labels$user_id), .combine = rbind) %do%{
+  cat(user,"\n")
+  this_user_day = days[which(days$user_id == user),]
+  if(nrow(this_user_day)>0){this_user_obs = create_observation_scores(d = this_user_day, features = hsmm$obs_names)
+  }else{this_user_obs = data.frame()}
+  return(this_user_obs)
+}
+obs_mat = obs %>% dplyr::select(str_c(hsmm$obs_names,"_score")) %>%  as.matrix() 
+
+obs$key = paste0(obs$user_id, "_", obs$rel_date)
+
+```
+
+
+
+
+```{r hsmm_em computing the params from the labeled states}
+
+m = match(labels$key, obs$key)
+obs = obs[m,]
+obs$state = labels$state_name
+obs = obs[!is.na(obs$key),]
+
+w = matrix(0, nrow = nrow(obs), ncol = hsmm$n_states)
+ix = 1:nrow(obs);
+iy = match(obs$state, hsmm$states$names)
+w[cbind(ix,iy)] = 1
+
+obs_mat = obs %>%  dplyr::select(str_c(hsmm$obs_names, "_score"))
+parem_from_labelled_data = compute_new_em_parms(obs = obs_mat, w = w, parem = hsmm$emission_par_init)
+
+
+N = 1000
+r_obs_from_labelled_data = foreach(state = 1:hsmm$n_states, .combine = rbind) %do%{
+  this_state_r_obs = generate_random_obs(n = N, parem = parem_from_labelled_data, state = state) %>% 
+    as.data.frame() %>% set_colnames(hsmm$obs_names) %>% 
+    mutate(state_name =  hsmm$states$abbr[state], color = hsmm$state$colors[state],n = 1:N) %>% 
+    tidyr::pivot_longer(.,cols = hsmm$obs_names, names_to = "obs_name")
+  return(this_state_r_obs)
+}
+
+r_obs_from_labelled_data$state_name = factor(r_obs_from_labelled_data$state_name, levels = hsmm$states$abbr)
+r_obs_from_labelled_data$obs_name = factor(r_obs_from_labelled_data$obs_name, levels = hsmm$obs_names)
+
+
+g_par_labelled_data = ggplot(r_obs_from_labelled_data, aes(x = state_name, y = value, fill = color, col = color))+  
+  geom_violin(bw = 0.05)+
+  scale_color_identity()+scale_fill_identity()+
+  facet_grid( obs_name ~ ., scale = "free")
+
+g_par_labelled_data
+
+```
+
+
+```{r hsmm_em adjusting the params with the labeled states}
+
+r_obs_mat = tidyr::pivot_wider(r_obs, id_cols = c(state_name, color, n), names_from = obs_name, values_from = value)
+
+w_init = matrix(0, nrow = nrow(r_obs_mat), ncol = hsmm$n_states)
+ix = 1:nrow(r_obs_mat);
+iy = match(r_obs_mat$state_name, hsmm$states$abbr)
+w_init[cbind(ix,iy)] = 1
+
+r_obs_mat = r_obs_mat %>% select(hsmm$obs_names)
+colnames(obs_mat) = hsmm$obs_names
+
+mixed_obs_mat = rbind(r_obs_mat, obs_mat) %>%  as.matrix()
+mixed_w = rbind(w_init, w)
+
+parem = compute_new_em_parms(obs = mixed_obs_mat, w = mixed_w, parem = hsmm$emission_par_init)
+
+
+N = 1000
+r_obs_mix = foreach(state = 1:hsmm$n_states, .combine = rbind) %do%{
+  this_state_r_obs = generate_random_obs(n = N, parem = parem, state = state) %>% 
+    as.data.frame() %>% set_colnames(hsmm$obs_names) %>% 
+    mutate(state_name =  hsmm$states$abbr[state], color = hsmm$state$colors[state],n = 1:N) %>% 
+    tidyr::pivot_longer(.,cols = hsmm$obs_names, names_to = "obs_name")
+  return(this_state_r_obs)
+}
+
+r_obs_mix$state_name = factor(r_obs_mix$state_name, levels = hsmm$states$abbr)
+r_obs_mix$obs_name = factor(r_obs_mix$obs_name, levels = hsmm$obs_names)
+
+
+g_par_mix = ggplot(r_obs_mix, aes(x = state_name, y = value, fill = color, col = color))+  
+  geom_violin(bw = 0.05)+
+  scale_color_identity()+scale_fill_identity()+
+  facet_grid( obs_name ~ ., scale = "free")
+
+g_par_mix
+
+
+hsmm$emission_par = parem
+
+```
+
+
+```{r hsmm_em emission param comparison viz, echo=FALSE}
+
+r_obs_all = rbind(mutate(r_obs, type = "init"),
+                  mutate(r_obs_from_labelled_data, type = "labelled_data"),
+                  mutate(r_obs_mix, type = "mix"))
+
+
+g_par = ggplot(r_obs_all, aes(x = type, y = value, fill = color, col = color))+  
+  geom_violin(bw = 0.05)+
+  scale_color_identity()+scale_fill_identity()+
+  facet_grid( obs_name ~ state_name, scale = "free")
+g_par
+
+```
+
+
+
+### Weights on the variables // states
+
+```{r hsmm_em weights on the variables for each states }
+
+hsmm$weights = matrix(1, nrow = hsmm$n_states, ncol = hsmm$n_obs, dimnames = list(hsmm$states$abbr, hsmm$obs_names))
+weights_key = matrix(str_c(rep(hsmm$states$abbr, each = hsmm$n_obs),"_",rep(hsmm$obs_names, hsmm$n_states)), 
+                     nrow = hsmm$n_states, ncol = hsmm$n_obs,byrow = TRUE)
+hsmm$weights[weights_key %in% str_c("M","_",c("bleeding","preg", "acf","preg_hint"))] = c(3,2,3,3)
+hsmm$weights[weights_key %in% str_c("lE","_",c("LH","mucus","temp","preg","acf","preg_hint","obs_dens"))] =
+  c(2,2,2,0.5,3,2,0)
+hsmm$weights[weights_key %in% str_c("hE","_",c("mucus","temp", "acf","preg_hint","obs_dens"))] = c(3,2,3,2,0)
+hsmm$weights[weights_key %in% str_c("preO","_",c("LH","mucus", "acf","preg_hint","obs_dens"))] = c(3,3,3,2,0)
+hsmm$weights[weights_key %in% str_c("O","_",c("LH","mucus","acf","preg_hint","obs_dens"))] = c(3,3,3,2,0)
+hsmm$weights[weights_key %in% str_c("postO","_",c("LH","mucus","temp","acf","preg_hint","obs_dens"))] = c(3,3,3,3,2,0)
+hsmm$weights[weights_key %in% str_c("Lut","_",c("LH","mucus","temp","acf","preg_hint","obs_dens"))] = c(2,2,3,3,2,0)
+hsmm$weights[weights_key %in% str_c("P","_",c("temp","preg"))] = c(3,3)
+hsmm$weights[weights_key %in% str_c("PL","_",c("temp","preg","preg_hint","obs_dens"))] = c(3,3,2,0.5)
+hsmm$weights[weights_key %in% str_c("L","_",c("bleeding","temp"))] = c(3,3)
+hsmm$weights[weights_key %in% str_c("PB1","_",c("temp","preg","acf","preg_hint"))] = c(2,3,3,3)
+hsmm$weights[weights_key %in% str_c("PB2","_",c("bleeding","preg","acf","preg_hint","obs_dens"))] = c(2,2,3,3,0)
+hsmm$weights[weights_key %in% str_c("PB3","_",c("acf","preg_hint","obs_dens"))] = c(3,3,0)
+hsmm$weights[weights_key %in% str_c("B","_",c("bleeding","acf"))] = c(3,3)
+hsmm$weights[weights_key %in% str_c("PP","_",c("preg"))] = c(1.5)
+hsmm$weights[weights_key %in% str_c("BF","_",c("preg","acf"))] = c(2,2)
+hsmm$weights[weights_key %in% str_c("Ano","_",c("temp","preg", "obs_dens" ))] = c(3,2,3)
+
+hsmm$weights
+
+#hsmm$weights = hsmm$weights/rowSums(hsmm$weights)
+
+molten_weights = melt(hsmm$weights)
+colnames(molten_weights) = c("state","variable","weight")
+molten_weights$state = factor(molten_weights$state, levels = hsmm$states$abbr)
+molten_weights$variable = factor(molten_weights$variable, levels = rev(hsmm$obs_names))
+
+
+ggplot(molten_weights, aes(x = state, y = variable, fill = weight))+
+  geom_tile()+
+  scale_fill_gradient(low = "papayawhip",high = "royalblue1")
+
+
+```
+
+
+
+
+
+#### Save the hsmm
+
+```{r hsmm_em save the model with the emissions}
+
+j = which(names(hsmm) == "emission_par_init"); if(length(j)>0){hsmm = hsmm[-j]}
+save(hsmm, file = paste0(IO$tmp_data, "hsmm.Rdata"))
+```
+
+
+

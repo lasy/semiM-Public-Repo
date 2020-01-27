@@ -1,0 +1,116 @@
+---
+title: 'HsMm: Data analysis to inform the model design'
+author: "Laura Symul"
+date: "11/7/2019"
+output: html_document
+---
+
+
+
+```{r data_analysis setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE)
+source("Scripts/00_setup.R")
+```
+
+# Data analysis to inform the model design
+
+## Temperature profiles during pregnancies
+
+```{r data_analysis finding users with at term pregnancies and temperature measurements}
+
+users = read_feather(path = str_c(IO$output_data, "users.feather"))
+cycles = read_feather(path = str_c(IO$output_data, "cycles.feather"))
+
+cycles$length = (cycles$end - cycles$start) %>%  as.numeric()
+cycles$cycle_nb = ave(rep(1, nrow(cycles)), by = cycles$user_id, FUN = cumsum)
+cycles$cycle_id = str_c(cycles$user_id, "_", cycles$cycle_nb)
+
+at_term_pregnancy = cycles$pregnancy & (cycles$length %in% 244:370)
+users_with_at_term_pregnancies = intersect(cycles$user_id[which(at_term_pregnancy)], users$user_id[users$n_temp > 0])
+
+pregnancies = cycles %>% dplyr::filter(at_term_pregnancy)
+pregnancies_long = lapply(pregnancies, rep, pregnancies$length) %>% as.data.frame(., stringsAsFactors = FALSE)
+pregnancies_long$cycleday = ave(rep(1,nrow(pregnancies_long)), by = pregnancies_long$cycle_id, FUN = cumsum)
+pregnancies_long$date = pregnancies_long$start + pregnancies_long$cycleday - 1
+pregnancies_long$day_id = str_c(pregnancies_long$user_id, "_",pregnancies_long$date)
+
+```
+
+
+
+```{r data_analysis keeping all observations of users with at term pregnancies and temperature measurements}
+
+days_files = list.files(path = str_c(IO$output_data, "Days/"))
+
+days = foreach(file = days_files, .combine = rbind) %do%{
+  cat("\t", file, "\t ||")
+  this_days = read_feather(path = str_c(IO$output_data,"Days/",file))
+  this_days = this_days %>% filter(user_id %in% users_with_at_term_pregnancies, !is.na(temperature))
+  this_days$day_id = str_c(this_days$user_id, "_",this_days$date)
+  this_days = this_days %>%  filter(day_id %in% pregnancies_long$day_id)
+  return(this_days)
+}
+
+write_feather(days, path = str_c(IO$tmp_data, "days_of_users_during_at_term_pregnancies.feather"))
+
+```
+
+
+```{r data_analysis label cycles in the days table}
+
+days = days %>% arrange(user_id, date)
+m = match(days$day_id, pregnancies_long$day_id)
+days$cycle_nb = pregnancies_long$cycle_nb[m]
+days$cycle_id = pregnancies_long$cycle_id[m]
+days$cycleday = pregnancies_long$cycleday[m]
+
+```
+
+
+```{r data_analysis plot temperature profiles}
+
+days$questionable_temp[is.na(days$questionable_temp)] = FALSE
+
+agg = aggregate(temperature ~ cycle_id, days[(days$cycleday %in% 5:13) & (!days$questionable_temp),], median)
+days$temperature_low_plateau = agg$temperature[match(days$cycle_id, agg$cycle_id)]
+days$temp_norm = days$temperature - days$temperature_low_plateau
+
+days_filtered = days %>% dplyr::filter(cycleday < 10*30.5, 
+                                       !questionable_temp , 
+                                       temperature > 95, temperature < 100 , 
+                                       !is.na(temperature_low_plateau))
+
+
+median_profile = ddply(days_filtered, .(cycleday),  summarize,
+                       temp = median(temp_norm))
+
+ggplot(days_filtered, aes(x = cycleday, y = temp_norm))+
+  geom_line(aes(group = cycle_id), alpha = 0.05)+
+  geom_line(data = median_profile, aes(x = cycleday, y = temp), col = "red", size = 2)+
+  geom_vline(xintercept = 30.5*c(3,6,9))+
+  ylim(c(-1,2.5))
+
+```
+
+
+```{r data_analysis plot of pregnancies with lots of temperature measurements}
+
+agg = aggregate(cycleday ~ cycle_id, days_filtered, lu)
+selected_cycle_ids = agg$cycle_id[agg$cycleday >= 150]
+
+for(cycle in selected_cycle_ids){
+  this_cycle_days = days_filtered %>% dplyr::filter(cycle_id == cycle)
+  
+  g = ggplot(this_cycle_days, aes(x = cycleday, y = temp_norm))+
+    geom_line()+
+    geom_vline(xintercept = 30.5*c(3,6,9), col = "blue")+
+    xlim(c(0,10*30.5))
+  print(g)
+  
+  #plot(this_cycle_days$cycleday, this_cycle_days$temp_norm, type = "l")
+}
+
+```
+
+
+

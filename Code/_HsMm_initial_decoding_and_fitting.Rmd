@@ -1,0 +1,1129 @@
+---
+title: "Initial Decoding and Model Fitting"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+```{r idecod knitr setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r idecod setup, include = FALSE, eval = TRUE, cache = FALSE}
+source("Scripts/00_setup.R")
+```
+
+# Initial Decoding and Model Fitting
+
+
+## Users subset selection
+
+To fit the model, we will use the time-series of a diverse subset of users.
+
+We will select users from these different categories:
+
+1. Users with pregnancies
+
+2. Users with many observations (mucus, temperature, LH tests)
+
+3. Users with few observations (just period)
+
+4. Users with very long time-series
+
+5. Users with long and with short cycles
+
+6. Both users who declared wanted to achieve and to avoid pregnancies
+
+
+```{r idecod users selection}
+
+users = read_feather(path = str_c(IO$output_data,"users.feather"))
+
+top_n = 30
+
+u1 = users %>% dplyr::filter(n_pos_preg_test > 0,
+                             n_days_obs >= 365,
+                             (batch %% 10) == 0 ) %>% mutate(u_type = "1") %>% head(top_n)
+
+u2 = users %>% dplyr::filter(n_days_obs >= 365,
+                             n_days_obs < 365*2,
+                             (n_temp/n_days_obs >= 1/2) | (n_mucus/n_days_obs >= 1/4) |  (n_LH_test/n_days_obs >= 1/10),
+                             (batch %% 10) == 0)%>% mutate(u_type = "2") %>% head(top_n)
+
+
+u3 = users %>% dplyr::filter(n_days_obs >= 365,
+                             n_days_obs < 365*2,
+                             (n_temp < 10) & (n_mucus < 5) &  (n_LH_test<3),
+                             (batch %% 10) == 0)%>% mutate(u_type = "3") %>% head(top_n)
+
+
+u4 = users %>% dplyr::filter(n_days_obs >= 5*365,
+                             (batch %% 10) == 0)%>%  mutate(u_type = "4") %>% head(top_n)
+
+
+u5 = users %>% dplyr::filter(round(average_cycle) %in% c(20,40),
+                             round(average_luteal) %in% c(11:14),
+                             n_days_obs >= 365,
+                             n_days_obs < 365*2,
+                             (batch %% 10) == 0)%>%  mutate(u_type = "5") %>% head(top_n)
+
+
+u = rbind(u1,u2,u3,u4,u5)
+u = ddply(u, .(user_id, batch), summarize,
+          u_type = min(u_type))
+u = u %>%  arrange(u_type, batch, user_id)
+
+dim(u)
+
+```
+
+```{r idecod retrieving their observations}
+
+days_selected_users = foreach(b = unique(u$batch), .combine = rbind) %do% {
+  cat(b,"\n")
+  days = read_feather(path = str_c(IO$output_data,"Days/days_",b,".feather"))
+  days = days %>% dplyr::filter(user_id %in% u$user_id)
+  days
+}
+
+write_feather(days_selected_users, path = str_c(IO$tmp_data,"days_selected_users.feather"))
+
+```
+
+
+
+
+## Loading model and data
+
+
+We load the initial model, i.e. the model whose parameters and architecture are specified based on biological/medical literature and based on the prior-analysis of the datasets (for calibration of temperature variations, mucus categories, etc.).
+
+```{r idecod load the general semi-markov model}
+
+load(file = paste0(IO$tmp_data, "hsmm.Rdata"), verbose = TRUE)
+
+```
+
+
+We load the manual labels.
+
+```{r idecod load the manual labels}
+
+manual_labels = read_feather(path = paste0(IO$output_data, "manual_labels.feather"))
+
+```
+
+
+## Preparing the observations
+
+The original features as tracked by the users in the app are transformed into the "observed variables".
+
+These transformations include switching from categorical data to discrete scores or results of basic time-series analyses such as computing the maximal auto-correlation score to provide a proxi for the regularity of the bleeding patterns.
+
+
+```{r idecod preparing the observations}
+
+
+days = read_feather(path = str_c(IO$tmp_data,"days_selected_users.feather"))
+
+# formating and transforming the observations to match the model specifications
+#intersect(unique(manual_labels$user_id),unique(days$user_id))
+obs = foreach(user = unique(days$user_id) , .combine = rbind)%do%{
+  #cat(user,"\n")
+  d = days[which(days$user_id == user),]
+  d = d[order(d$date),]
+  
+  this_user_obs = create_observation_scores(d = d, features = hsmm$obs_names)
+  this_user_obs$user_id = this_user_obs$user_id %>% as.character()
+  #cat("\t",dim(this_user_obs), "\n")
+  return(this_user_obs)
+}
+
+obs_full = obs
+
+obs = obs_full # %>% dplyr::filter(user_id %in% unique(obs_full$user_id)[1:100])
+
+obs_mat = obs %>%  dplyr::select(str_c(hsmm$obs_names, "_score")) %>% as.matrix()
+colnames(obs_mat) = colnames(obs_mat) %>%  str_replace(.,"_score","")
+N = rle(obs$user_id)$length; names(N) = rle(obs$user_id)$values
+
+obsdata = list(N = N, x = obs_mat); class(obsdata) = "hsmm.data"
+
+
+# matching the manual labels
+j = match(str_c(obs$user_id,"_",obs$rel_date),str_c(manual_labels$user_id,"_",manual_labels$rel_date))
+labels = data.frame(state = match(manual_labels$state_name, hsmm$states$names)[j], weight = c(1/2,1)[match(manual_labels$type[j],c("V","M"))])
+
+```
+
+
+
+
+
+## Decoding with initial model
+
+```{r idecod modified package functions, include = FALSE}
+
+source("Scripts/mhsmm_LSY/R/hsmm_functions.R")
+source("Scripts/mhsmm_LSY/R/spec_functions.R")
+
+```
+
+
+```{r idecod decoding, warning=FALSE}
+
+# building the hsmm model
+hsmm_init = bluid_hsmm(hsmm, M = max(N))
+
+# Decoding
+tic()
+viterbi_init = predict.hsmmspec(object = hsmm_init, newdata = obsdata, method = "viterbi")
+toc()
+# tic()
+# smoothed_init = predict.hsmmspec(object = hsmm_init, newdata = obsdata, method = "smoothed", debug = FALSE)
+# toc()
+
+tic()
+smoothed_init = list()
+smoothed_init$p = matrix(0, nrow = nrow(obs), ncol = hsmm$n_states)
+smoothed_init$s = rep(0, nrow(obs))
+problematic_users = c()
+obsdata_for_fit = list(); class(obsdata_for_fit) = "hsmm.data"
+labels_for_fit = data.frame()
+for(i in 1:length(obsdata$N)){
+  cat("USER ",i,"\n")
+  this_user_N = obsdata$N[i]
+  j = which(obs$user_id == names(this_user_N))
+  length(j);
+  this_user_obsdata = list(N = this_user_N, x = obsdata$x[j,])
+  class(this_user_obsdata) = "hsmm.data"
+  
+  this_user_smoothed_init = try(predict.hsmmspec(object = hsmm_init, newdata = this_user_obsdata, method = "smoothed", debug = FALSE))
+  if(class(this_user_smoothed_init) == "try-error"){
+    this_user_p = matrix(0, nrow = this_user_N, ncol = hsmm$n_states)
+    this_user_s = rep(NA, this_user_N)
+    problematic_users = c(problematic_users, i)
+  }else{
+    this_user_p = this_user_smoothed_init$p
+    this_user_s = this_user_smoothed_init$s
+    if(i == 1){
+      obsdata_for_fit$N = this_user_N; obsdata_for_fit$x = obsdata$x[j,]
+    }else{
+      obsdata_for_fit$N = c(obsdata_for_fit$N, this_user_N); obsdata_for_fit$x = rbind(obsdata_for_fit$x, obsdata$x[j,])
+    }
+    labels_for_fit = rbind(labels_for_fit, labels[j,])
+  }
+  smoothed_init$p[j,] = this_user_p
+  smoothed_init$s[j] = this_user_s
+}
+toc()
+
+# Saving results
+viterbi_states_init = data.frame(user_id = obs$user_id, 
+                                 rel_date = obs$rel_date, 
+                                 label_id = as.character(now()),
+                                 state_name = hsmm$states$names[viterbi_init$s], 
+                                 color = hsmm$states$colors[viterbi_init$s], 
+                                 type = "viterbi",
+                                 state_num = viterbi_init$s,
+                                 stringsAsFactors = FALSE)
+
+smoothed_states_init = data.frame(user_id = obs$user_id, 
+                                  rel_date = obs$rel_date, 
+                                  label_id = as.character(now()),
+                                  state_name = hsmm$states$names[smoothed_init$s], 
+                                  color = hsmm$states$colors[smoothed_init$s], 
+                                  type = "smoothed",
+                                  state_num = smoothed_init$s,
+                                  stringsAsFactors = FALSE)
+
+
+state_prob_init = data.frame(smoothed_init$p) %>%  set_colnames(1:hsmm$n_states) %>%  mutate(user_id = obs$user_id, rel_date = obs$rel_date)
+state_prob_long_init = melt(state_prob_init, id.vars = c("user_id","rel_date")) %>%  
+  mutate(color =  hsmm$states$colors[variable], prob = value) %>%  
+  dplyr::rename(state_num = variable)
+
+folder = paste0(IO$output_data,"decoding/")
+if(!dir.exists(folder)){dir.create(folder)}
+write_feather(viterbi_states_init, path = paste0(folder,"viterbi_states_init.feather"))
+write_feather(smoothed_states_init, path = paste0(folder,"smoothed_states_init.feather"))
+write_feather(state_prob_long_init, path = paste0(folder,"smoothed_probs_init.feather"))
+
+```
+
+
+
+### Accuracy and confidence score of decoding with Initial Model
+
+
+#### Accuracy
+
+```{r idecod accuracy of initial model}
+
+# Viterbi Accuracy
+
+A_V_i = sum(viterbi_init$s == labels$state, na.rm = TRUE)/sum(!is.na(labels$state))
+#A_V_i = sum((viterbi_init$s == labels$state)*labels$weight, na.rm = TRUE)/sum(labels$weight, na.rm = TRUE)
+
+
+cat("Accuracy of the viterbi decoding with model with initial parameters: ",A_V_i,"\n")
+
+
+# Backward Forward Accuracy 
+
+mx = 1:nrow(labels)
+my = labels$state
+A_i = mean(smoothed_init$p[cbind(mx,my)], na.rm = TRUE)
+#A_i = weighted.mean(smoothed_init$p[cbind(mx,my)], w = labels$weight, na.rm = TRUE)
+
+cat("Accuracy of the model with initial parameters: ",A_i,"\n")
+
+```
+
+
+
+#### Confidence in decoding
+
+```{r idecod confidence in decoding initial model}
+
+
+LL = compute_log_likelihood(state_decoded_seq = viterbi_states_init, model = hsmm_init, obsdata = obsdata, N = 100)
+viterbi_states_init$loglik = LL$loglik
+viterbi_states_init$loglik_b = LL$loglik_b
+viterbi_states_init$LR = LL$LR
+viterbi_states_init$cs = LL$cs
+
+hist(viterbi_states_init$cs)
+
+
+write_feather(viterbi_states_init, path = paste0(folder,"viterbi_states_init.feather"))
+
+
+```
+
+```{r idecod confidence in decoding initial model - VIZ}
+
+viterbi_states_init$correct_decoding = (viterbi_states_init$state_num) == (labels$state)
+viterbi_states_init$label_type = factor(labels$weight)
+
+
+ggplot(viterbi_states_init, aes(x = cs))+
+  geom_histogram()+
+  facet_grid(correct_decoding ~., scale = "free")
+
+
+ggplot(viterbi_states_init, aes(x = state_num, y = cs, fill = color))+
+  geom_violin(bw = 0.05, col = NA)+
+  scale_fill_identity()+
+  facet_grid(correct_decoding ~., scale = "free")
+
+
+
+
+```
+
+
+
+
+```{r idecod confidence in decoding init model smoothed}
+
+
+LL = compute_log_likelihood(state_decoded_seq = smoothed_states_init, model = hsmm_init, obsdata = obsdata, N = 100)
+smoothed_states_init$loglik = LL$loglik
+smoothed_states_init$loglik_b = LL$loglik_b
+smoothed_states_init$LR = LL$LR
+smoothed_states_init$cs = LL$cs
+
+
+smoothed_states_init$manually_labelled_states = hsmm$states$abbr[labels$state]
+
+hist(smoothed_states_init$cs)
+
+write_feather(smoothed_states_init, path = paste0(folder,"smoothed_states_init.feather"))
+
+
+
+
+```
+
+
+
+## Fitting
+
+
+```{r idecod fitting}
+
+# Fitting
+tic()
+hsmm_fitted = hsmmfit(x = obsdata_for_fit, model = hsmm_init, label = labels_for_fit, maxit = 1, 
+                      lock.d = TRUE, lock.transition = TRUE, graphical = FALSE, debug = TRUE)
+toc()
+names(hsmm_fitted)
+
+
+# Saving the fitted model
+save(hsmm_fitted, file = paste0(IO$output_data, "hsmm_fitted.Rdata"))
+
+```
+
+## Decoding with fitted model
+
+```{r idecod decoding with fitted model}
+
+# Decode with the fitted model VITERBI
+viterbi_fitted = predict.hsmm(object = hsmm_fitted, newdata = obsdata, method = "viterbi")
+
+# Decode with the fitted model SMOOTHED
+#smoothed_fitted = predict.hsmm(object = hsmm_fitted, newdata = obsdata, method = "smoothed", debug = FALSE) #buggy
+
+smoothed_fitted = list()
+smoothed_fitted$p = 0*smoothed_init$p
+smoothed_fitted$s = 0*smoothed_init$s
+for(i in 1:length(obsdata$N)){
+  cat("USER ",i,"\n")
+  this_user_N = obsdata$N[i]
+  j = which(obs$user_id == names(this_user_N))
+  length(j);
+  #if(i == 5){j = j[1915:2579];this_user_N = length(j)}
+  #if(i == 54){j = j[1472:3869];this_user_N = length(j)}
+  #if(i == 60){j = j[1537:2449];this_user_N = length(j)}
+  #length(j)
+  this_user_obsdata = list(N = this_user_N, x = obsdata$x[j,])
+  class(this_user_obsdata) = "hsmm.data"
+  
+  #this_user_smoothed_init = try(predict.hsmmspec(object = hsmm_init, newdata = this_user_obsdata, method = "smoothed", debug = FALSE))
+  
+  this_user_smoothed_fitted = try(predict.hsmm(object = hsmm_fitted, newdata = this_user_obsdata, method = "smoothed", debug = FALSE))
+  if(class(this_user_smoothed_fitted) == "try-error"){
+    this_user_p = matrix(0, nrow = this_user_N, ncol = hsmm$n_states)
+    this_user_s = rep(NA, this_user_N)
+  }else{
+    this_user_p = this_user_smoothed_fitted$p
+    this_user_s = this_user_smoothed_fitted$s
+    
+  }
+  smoothed_fitted$p[j,] = this_user_p
+  smoothed_fitted$s[j] = this_user_s
+  
+  # this_user_days = days %>% filter(user_id == names(obsdata$N[i]))
+  # this_user_obs = obs %>% filter(user_id == names(obsdata$N[i]))
+  # plot_user_history(d = this_user_days, obs =  this_user_obs)
+}
+
+
+# Saving results
+viterbi_states_fitted = data.frame(user_id = obs$user_id, 
+                                   rel_date = obs$rel_date, 
+                                   label_id = as.character(now()),
+                                   state_name = hsmm$states$names[viterbi_fitted$s], 
+                                   color = hsmm$states$colors[viterbi_fitted$s], 
+                                   type = "viterbi",
+                                   state_num = viterbi_fitted$s,
+                                   stringsAsFactors = FALSE)
+
+smoothed_states_fitted = data.frame(user_id = obs$user_id, 
+                                    rel_date = obs$rel_date, 
+                                    label_id = as.character(now()),
+                                    state_name = hsmm$states$names[smoothed_fitted$s], 
+                                    color = hsmm$states$colors[smoothed_fitted$s], 
+                                    type = "smoothed",
+                                    state_num = smoothed_fitted$s,
+                                    stringsAsFactors = FALSE)
+
+lu(smoothed_states_fitted$user_id[!is.na(smoothed_states_fitted$state_num)])
+
+state_prob_fitted = data.frame(smoothed_fitted$p) %>%  set_colnames(1:hsmm$n_states) %>%  mutate(user_id = obs$user_id, rel_date = obs$rel_date)
+state_prob_long_fitted = melt(state_prob_fitted, id.vars = c("user_id","rel_date")) %>%  
+  mutate(color =  hsmm$states$colors[variable], prob = value) %>%  
+  dplyr::rename(state_num = variable)
+
+folder = paste0(IO$output_data,"decoding/")
+if(!dir.exists(folder)){dir.create(folder)}
+write_feather(viterbi_states_fitted, path = paste0(folder,"viterbi_states_fitted.feather"))
+write_feather(smoothed_states_fitted, path = paste0(folder,"smoothed_states_fitted.feather"))
+write_feather(state_prob_long_fitted, path = paste0(folder,"smoothed_probs_fitted.feather"))
+```
+
+
+
+### Accuracy and confidence score of decoding with Fitted Model 
+
+#### Accuracy
+
+```{r idecod accuracy of fitted model}
+
+# Viterbi Accuracy
+
+A_V_f = sum(viterbi_states_fitted$state_num == labels$state, na.rm = TRUE)/sum(!is.na(labels$state))
+
+cat("Accuracy of the viterbi decoding with model with fitted parameters: ",A_V_f,"\n")
+
+
+
+# Smoothed Accuracy
+
+mx = 1:nrow(labels)
+my = labels$state
+A_f = mean(smoothed_fitted$p[cbind(mx,my)], na.rm = TRUE)
+
+cat("Accuracy of the model with fitted parameters: ",A_f,"\n")
+
+
+```
+
+#### Confusion matrix
+
+```{r idecod confusion matrix of fitted model}
+
+# Viterbi Confusion Matrix
+
+j = which(!is.na(labels$state))
+cm = table(true = hsmm$states$abbr[labels$state[j]], decoded =  hsmm$states$abbr[viterbi_fitted$s[j]] )
+cm
+
+# Smoothed Confusion Matrix
+# to do
+
+```
+
+#### Confidence in decoding
+
+```{r idecod confidence in decoding fitted model}
+
+
+LL = compute_log_likelihood(state_decoded_seq = viterbi_states_fitted, model = hsmm_fitted$model, obsdata = obsdata)
+viterbi_states_fitted$loglik = LL$loglik
+viterbi_states_fitted$loglik_b = LL$loglik_b
+viterbi_states_fitted$LR = LL$LR
+viterbi_states_fitted$cs = LL$cs
+
+
+hist(viterbi_states_fitted$cs)
+
+write_feather(viterbi_states_fitted, path = paste0(folder,"viterbi_states_fitted.feather"))
+
+
+```
+
+
+
+```{r idecod confidence in decoding fitted model - VIZ, fig.width=3.5, fig.height=3}
+
+viterbi_states_fitted$correct_decoding = (viterbi_states_fitted$state_num) == (labels$state)
+viterbi_states_fitted$label_type = factor(c("approximate labels","manual labels")[labels$weight*2])
+
+ggplot(viterbi_states_fitted %>%  dplyr::filter(!is.na(correct_decoding)), aes(x = cs, fill = correct_decoding))+
+  geom_histogram(binwidth = 0.05)+
+  facet_grid(correct_decoding ~., scale = "free", drop = TRUE)+
+  ggtitle("Histogram of confidence score")+
+  theme(legend.position = "bottom")
+
+ggplot(viterbi_states_fitted, aes(x = cs, fill = label_type))+
+  geom_histogram(binwidth = 0.05)+
+  facet_grid(correct_decoding ~., scale = "free", drop = TRUE)
+
+```
+
+
+```{r idecod confidence in decoding fitted model per state}
+
+
+
+ggplot(viterbi_states_fitted %>% dplyr::filter(correct_decoding))+
+  geom_histogram(aes(x = loglik_b), binwidth = 0.1, fill = "red")+
+  geom_histogram(aes(x = loglik), binwidth = 0.1, fill = "blue", alpha = 0.4)+
+  facet_grid(state_num + state_name ~., scale = "free")
+
+
+ggplot(viterbi_states_fitted %>% dplyr::filter(correct_decoding))+
+  geom_histogram(aes(x = cs), binwidth = 0.01)+
+  facet_grid(state_num + state_name ~., scale = "free")
+
+
+
+ggplot(viterbi_states_fitted %>% dplyr::filter(!correct_decoding))+
+  geom_histogram(aes(x = loglik_b), binwidth = 0.1, fill = "red")+
+  geom_histogram(aes(x = loglik), binwidth = 0.1, fill = "blue", alpha = 0.4)+
+  facet_grid(state_num + state_name ~., scale = "free")
+
+
+ggplot(viterbi_states_fitted %>% dplyr::filter(!correct_decoding))+
+  geom_histogram(aes(x = cs), binwidth = 0.01)+
+  facet_grid(state_num + state_name ~., scale = "free")
+
+
+
+```
+
+
+
+
+
+
+
+
+## Comparison of initial vs fitted model
+
+
+The performances of the fitted model can be improved by validating/labelling more time-series (or by adding observation variables if any available).
+
+To validate/label more time-series, one can use the shiny app in `HsMm_manual_labelling.Rmd`.
+
+
+### Emission parameters
+
+```{r idecod comparison emission parameters}
+
+source("Scripts/00_functions_viz.R")
+# Visualizing the initial and fitted parameters
+viz_em_parm(p1 = hsmm_init$parms.emission, p2 = hsmm_fitted$model$parms.emission, hsmm = hsmm)
+
+```
+
+
+### Accuracies
+
+#### Viterbi
+
+```{r idecod comparison of accuracies Viterbi decoding}
+
+A_V_i
+
+A_V_f
+
+
+Combined_accuracy = sum(
+  (viterbi_states_fitted$state_num == labels$state)|(viterbi_states_init$state_num == labels$state), 
+  na.rm = TRUE)/sum(!is.na(labels$state))
+
+Combined_accuracy
+
+
+```
+
+#### Smoothed
+
+```{r idecod comparison of accuracies}
+
+A_i
+
+A_f
+
+```
+
+
+### Confidence scores
+
+```{r idecod confidence scores, fig.width=12, fig.height=3}
+
+viterbi_states_fitted = mutate(viterbi_states_fitted,
+                               state_abbr = hsmm$states$abbr[state_num] %>% factor(.,levels = hsmm$states$abbr))
+
+ggplot(viterbi_states_fitted, aes(x = state_abbr, y = cs, fill = color))+
+  geom_violin(scale = "width", col = NA)+
+  xlab("Decoded states")+
+  ylab("Confidence score")+
+  scale_fill_identity()
+
+
+
+
+viterbi_states_fitted = mutate(viterbi_states_fitted,
+                               key = str_c(user_id, "_",rel_date))
+m = match(viterbi_states_fitted$key, manual_labels$key)
+viterbi_states_fitted$manually_labelled_states_names = manual_labels$state_name[m]
+k = match(viterbi_states_fitted$manually_labelled_states_names, hsmm$states$names)
+viterbi_states_fitted$manually_labelled_states = hsmm$states$abbr[k] %>% factor(.,levels = hsmm$states$abbr)
+viterbi_states_fitted$manually_labelled_states_color = hsmm$states$colors[k]
+
+
+write_feather(viterbi_states_fitted, path = paste0(folder,"viterbi_states_fitted.feather"))
+
+
+ggplot(viterbi_states_fitted, aes(x = manually_labelled_states, y = cs, fill = manually_labelled_states_color))+
+  geom_violin(scale = "width", col = NA)+
+  xlab("Manually labelled states")+
+  ylab("Confidence score")+
+  scale_fill_identity()
+
+
+
+```
+
+
+
+### Time-series
+
+```{r idecod decoding and fitting visualization, echo = FALSE, fig.height=9, fig.width=12, warning=FALSE}
+
+users = unique(days$user_id)
+
+for(user in users[1:10]){
+  
+  cat(user, "\n")
+  d = days %>% dplyr::filter(user_id == user)
+  
+  try({
+    p = plot_user_history(d = d, show_all_variables = FALSE)
+    print(p)
+  })
+  
+  
+  o = obs %>% dplyr::filter(user_id == user) %>% select(c("user_id","rel_date",str_c(hsmm$obs_names,"_score")))
+  viterbi_fitted =  viterbi_states_fitted  %>% dplyr::filter(user_id == user)
+  # summary of confidence cycle by cycle
+  k = which((viterbi_fitted$state_num == 1) & (dplyr::lag(viterbi_fitted$state_num) != 1))
+  if(length(k)>0){kr = rep(0:length(k), c(k[1],diff(c(k,nrow(viterbi_fitted)))))}else{kr = rep(0, nrow(viterbi_fitted))}
+  viterbi_fitted$cs_cycle_min = ave(viterbi_fitted$cs, by = kr, FUN = min)
+  viterbi_fitted$cs_cycle_mean = ave(viterbi_fitted$cs, by = kr, FUN = mean)
+  
+  states_labels_list = list(
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user),
+    
+    viterbi_init =  viterbi_states_init  %>% dplyr::filter(user_id == user),  
+    smoothed_init = smoothed_states_init  %>% dplyr::filter(user_id == user), 
+    smoothed_probs_init = state_prob_long_init %>% dplyr::filter(user_id == user),
+    
+    viterbi_fitted =  viterbi_fitted, 
+    smoothed_fitted = smoothed_states_fitted  %>% dplyr::filter(user_id == user), 
+    smoothed_probs_fitted = state_prob_long_fitted %>% dplyr::filter(user_id == user)
+  )
+  
+  try({
+    p = plot_user_history(obs = o, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+}
+
+
+```
+
+
+
+### Time-series; Summary
+
+
+```{r idecod decoding and fitting visualization short, echo = FALSE, fig.height=5, fig.width=15, warnings = FALSE}
+
+users = unique(days$user_id)
+
+for(user in users[1:10]){
+  
+  cat(user, "\n")
+  d = days %>% dplyr::filter(user_id == user)
+  
+  o = obs %>% dplyr::filter(user_id == user) %>% select(c("user_id","rel_date",str_c(hsmm$obs_names,"_score")))
+  viterbi_fitted =  viterbi_states_fitted  %>% dplyr::filter(user_id == user) %>% 
+    mutate(diff = (state_abbr == manually_labelled_states))
+  
+  states_labels_list = list(
+    viterbi_fitted =  viterbi_fitted %>% dplyr::select(user_id, rel_date, color, cs) %>%  
+      mutate(name = "States\n(Viterbi fitted)"), 
+    difference_with_ground_truth = viterbi_fitted %>% 
+      mutate(color = c("red","steelblue2")[diff+1], name = "Diff w/\nground truth") %>% 
+      dplyr::select(user_id, rel_date, color, alpha = cs),
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user)%>%  
+      mutate(name = "States\n(manual labels)")
+  )
+  
+  try({
+    p = plot_user_history(d = d, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+  
+  
+}
+
+
+```
+
+#### Smoothed init
+
+```{r idecod decoding and fitting visualization short smoothed init, echo = FALSE, fig.height=5, fig.width=15, warnings = FALSE}
+
+
+smoothed_states_init = read_feather(path = str_c(IO$output_data,"decoding/smoothed_states_init.feather"))
+users = unique(days$user_id)
+
+for(user in users[1:10]){
+  
+  cat(user, "\n")
+  d = days %>% dplyr::filter(user_id == user)
+  
+  o = obs %>% dplyr::filter(user_id == user) %>% select(c("user_id","rel_date",str_c(hsmm$obs_names,"_score")))
+  smoothed_init =  smoothed_states_init  %>% dplyr::filter(user_id == user) %>% 
+    mutate(state_abbr = hsmm$states$abbr[state_num],
+           diff = (state_abbr == manually_labelled_states))
+  
+  states_labels_list = list(
+    smoothed_init =  smoothed_init %>% dplyr::select(user_id, rel_date, color, cs) %>%  
+      mutate(name = "States\n(Backward-Forward - Init)"), 
+    difference_with_ground_truth = smoothed_init %>% 
+      mutate(color = c("red","steelblue2")[diff+1], name = "Diff w/\nground truth") %>% 
+      dplyr::select(user_id, rel_date, color, alpha = cs),
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user)%>%  
+      mutate(name = "States\n(manual labels)")
+  )
+  
+  try({
+    p = plot_user_history(d = d, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+  
+  
+}
+
+
+```
+
+
+
+### Time-series; Zoom
+
+
+```{r idecod decoding and fitting visualization ZOOM, echo = FALSE, fig.height=4, fig.width=10, warnings = FALSE}
+
+source("Scripts/00_functions_viz.R")
+
+users_list = data.frame(user_id = "3ec8d9a84ecb1efd9640201e69e458d148b8b118", start = 900, end = 1500) 
+users_list = rbind(users_list, 
+                   data.frame(user_id = "db0bfa84dcff70b46e928c9b9d4569a4fbf91416", start = 400, end = 550))
+users_list = rbind(users_list, 
+                   data.frame(user_id = "4517215d2a1f256e6077db5e4ecb359804b9c99e", start = 2150, end = 2286))
+
+for(user_i in 1:nrow(users_list)){
+  
+  user = users_list$user_id[user_i]
+  start = users_list$start[user_i]
+  end = users_list$end[user_i]
+  cat(user, "\n")
+  d = days %>% dplyr::filter(user_id == user, rel_date %in% start:end)
+  
+  o = obs %>% dplyr::filter(user_id == user, rel_date %in% start:end) %>%
+    select(c("user_id","rel_date",str_c(hsmm$obs_names,"_score")))
+  viterbi_fitted =  viterbi_states_fitted  %>% dplyr::filter(user_id == user, rel_date %in% start:end) %>% 
+    mutate(diff = (state_abbr == manually_labelled_states))
+  
+  states_labels_list = list(
+    smoothed_probs_fitted = state_prob_long_fitted %>% dplyr::filter(user_id == user, rel_date %in% start:end),
+    #viterbi_fitted =  viterbi_fitted %>% dplyr::select(user_id, rel_date, color, cs) %>%  
+    #  mutate(name = "States\n(Viterbi fitted)"), 
+    #difference_with_ground_truth = viterbi_fitted %>% 
+    #  mutate(color = c("red","steelblue2")[diff+1], name = "Diff w/\nground truth") %>% 
+    #  dplyr::select(user_id, rel_date, color, alpha = cs),
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user, rel_date %in% start:end)%>%  
+      mutate(name = "States\n(manual labels)")
+  )
+  
+  try({
+    p = plot_user_history(d = d, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+}
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r eval = FALSE}
+
+d = days %>%  dplyr::filter(user_id == unique(obs_full$user_id)[1])
+this_user_obs = obs_full %>%  dplyr::filter(user_id == unique(obs_full$user_id)[1])
+plot_user_history(d =d, obs = this_user_obs)
+
+d = days %>%  dplyr::filter(user_id == unique(obs_full$user_id)[3])
+this_user_obs = obs_full %>%  dplyr::filter(user_id == unique(obs_full$user_id)[3])
+plot_user_history(d = d, obs = this_user_obs)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r  eval = FALSE}
+j = which(obs$user_id == "e53b025d055be6a2931093247f9e0a9ec366bdfd")
+u_p = hsmm_fitted$p[j,] %>% set_colnames(hsmm$states$abbr) %>% as.data.frame() %>%  
+  mutate(rel_date = 1:length(j)) %>% tidyr::pivot_longer(cols = hsmm$states$abbr, names_to = "states") %>% 
+  mutate(color = hsmm$states$colors[match(states, hsmm$states$abbr)],
+         group = hsmm$states$group[match(states, hsmm$states$abbr)])
+
+ggplot(u_p, aes(x = rel_date, y = value, col = color))+
+  geom_line()+
+  scale_color_identity()+
+  xlim(c(100,750))
+
+ggplot(u_p, aes(x = rel_date, y = value, col = color))+
+  geom_line()+
+  scale_color_identity()+
+  facet_grid(group ~ .)+
+  xlim(c(100,750))
+
+ggplot(u_p, aes(x = rel_date, y = value, col = color))+
+  geom_line()+
+  scale_color_identity()+
+  facet_grid(. ~ states)+
+  xlim(c(100,750))
+
+
+
+
+u_p_s = smoothed_fitted$p_i[j,] %>% set_colnames(hsmm$states$abbr) %>% as.data.frame() %>%  
+  mutate(rel_date = 1:length(j)) %>% tidyr::pivot_longer(cols = hsmm$states$abbr, names_to = "states") %>% 
+  mutate(color = hsmm$states$colors[match(states, hsmm$states$abbr)],
+         group = hsmm$states$group[match(states, hsmm$states$abbr)])
+
+ggplot(u_p_s, aes(x = rel_date, y = value, col = color))+
+  geom_line()+
+  scale_color_identity()+
+  xlim(c(100,750))
+
+ggplot(u_p_s, aes(x = rel_date, y = value, col = color))+
+  geom_line()+
+  scale_color_identity()+
+  facet_grid(group ~ .)+
+  xlim(c(100,750))
+
+ggplot(u_p_s, aes(x = rel_date, y = value, col = color))+
+  geom_line()+
+  scale_color_identity()+
+  facet_grid(. ~ states)+
+  xlim(c(100,750))
+
+```
+
+
+
+```{r test viz for confidence, eval = FALSE}
+j = sample(1:M, 100)
+#j = 1:100
+
+LR = exp(loglik_obs[j] - loglik_obs_b[j])
+cs = apply(loglik_obs[j]>loglik_obs_r[j,], 1, sum)/200
+
+par(mfrow = c(3,1))
+
+matplot(loglik_obs_r[j,], ylim = range(loglik_obs_r[j,], loglik_obs_b[j],loglik_obs[j]), pch = 16, cex = 0.5, col = rgb(0,0,0,0.3))
+points(loglik_obs_b[j], type = "l")
+points(loglik_obs[j], type = "l", col = "red")
+
+matplot(cbind(LR, cs), type = "l", col = c("blue", "green3"), lty = 1, ylim = c(0,1))
+
+plot(LR, cs, xlim = c(0,1), ylim = c(0,1)); abline(a = 0, b = 1)
+
+cor(LR, cs)
+```
+
+
+
+
+```{r Confidence in decoding tests, eval = FALSE}
+
+
+for(user in unique(obs$user_id)){
+  cat(user,"\n")
+  
+  this_user_days = days %>%  dplyr::filter(user_id == user)
+  
+  
+  try({
+    p = plot_user_history(this_user_days = this_user_days, show_all_variables = FALSE)
+    print(p)
+  })
+  
+  this_user_obs = obs %>%  dplyr::filter(user_id == user)
+  
+  states_labels_list = list(
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user),
+    
+    viterbi_init =  viterbi_states_init  %>% dplyr::filter(user_id == user),  
+    smoothed_init = smoothed_states_init  %>% dplyr::filter(user_id == user), 
+    smoothed_probs_init = state_prob_long_init %>% dplyr::filter(user_id == user),
+    
+    viterbi_fitted =  viterbi_states_fitted  %>% dplyr::filter(user_id == user),  
+    smoothed_fitted = smoothed_states_fitted  %>% dplyr::filter(user_id == user), 
+    smoothed_probs_fitted = state_prob_long_fitted %>% dplyr::filter(user_id == user)
+  )
+  
+  try({
+    p = plot_user_history(obs = this_user_obs, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+  j = which(obs$user_id == user)
+  this_user_obsdata = list(N = length(j), x = obsdata$x[j,])
+  class(this_user_obsdata) = "hsmm.data"
+  
+  this_user_viterbi = predict.hsmm(object = hsmm_fitted, newdata = this_user_obsdata, method = "viterbi")
+  this_user_viterbi$loglik
+  this_user_viterbi$alpha[cbind(1:length(j),this_user_viterbi$s)]
+  plot(this_user_viterbi$alpha[cbind(1:length(j),this_user_viterbi$s)], col = hsmm$states$colors[this_user_viterbi$s], pch = 16, cex = 0.5)
+  plot(this_user_viterbi$alpha[,1], col = hsmm$states$colors[1], pch = 16, cex = 0.5)
+  
+  
+  this_user_smoothed = predict.hsmm(object = hsmm_fitted, newdata = this_user_obsdata, method = "smoothed")
+  plot(this_user_smoothed$p_i[cbind(1:length(j),this_user_viterbi$s)], lwd = 0.5, col = "gray", type = "l")
+  points(this_user_smoothed$p_i[cbind(1:length(j),this_user_viterbi$s)], col = hsmm$states$colors[this_user_viterbi$s], pch = 16, cex = 0.5)
+  plot(this_user_smoothed$p_i[cbind(1:length(j),this_user_smoothed$s)], lwd = 0.5, col = "red", type = "l")
+  points(this_user_smoothed$p_i[cbind(1:length(j),this_user_smoothed$s)], col = hsmm$states$colors[this_user_smoothed$s], pch = 16, cex = 0.5)
+  
+  
+  
+  # Trying to recover the viterbi loglikelihood
+  this_user_decoding = this_user_viterbi
+  state_rle = rle(this_user_decoding$s)
+  state_seq = state_rle$values
+  # loglik_init
+  loglik_init = hsmm$init[state_seq[1]] %>% log() %>% sum()
+  # loglik_trans
+  state_trans = data.frame(from = state_seq, to = dplyr::lead(state_seq)) %>% dplyr::filter(!is.na(to)) %>% as.matrix()
+  loglik_trans = hsmm$trans[state_trans] %>% log() %>%  sum()
+  # log_lik_sojourn
+  state_sojourn = state_rle$lengths
+  sojourn_i = cbind(state_seq, state_sojourn) %>% head(.,-1)
+  log_lik_sojourn = hsmm$sojourn[sojourn_i] %>%  log() %>% sum()
+  # loglik_obs
+  loglik_obs = this_user_decoding$p_i[cbind(1:nrow(this_user_decoding$p_i),this_user_decoding$s)] %>% log() %>% sum()
+  loglik = loglik_init + loglik_trans + log_lik_sojourn + loglik_obs
+  loglik
+  
+  # Trying to recover the viterbi loglikelihood "day by day"
+  this_user_decoding = this_user_viterbi
+  state_rle = rle(this_user_decoding$s)
+  state_seq = state_rle$values
+  state_sojourn = state_rle$lengths
+  loglik_base = rep(0, length(this_user_decoding$s))
+  # loglik_init
+  loglik_init = loglik_base
+  loglik_init[1] = hsmm$init[state_seq[1]] %>% log()
+  # loglik_trans
+  state_trans = data.frame(from = state_seq, to = dplyr::lead(state_seq)) %>% dplyr::filter(!is.na(to)) %>% as.matrix()
+  loglik_trans = loglik_base
+  loglik_trans[cumsum(state_sojourn) %>%  head(.,-1)] = hsmm$trans[state_trans] %>% log()
+  # log_lik_sojourn
+  sojourn_i = cbind(state_seq, state_sojourn) %>% head(.,-1)
+  log_lik_sojourn = loglik_base
+  log_lik_sojourn[ cumsum(state_sojourn) %>%  head(.,-1)] = hsmm$sojourn[sojourn_i] %>%  log() 
+  # loglik_obs
+  loglik_obs = this_user_decoding$p_i[cbind(1:nrow(this_user_decoding$p_i),this_user_decoding$s)] %>% log() 
+  loglik = loglik_init + loglik_trans + log_lik_sojourn/2 + loglik_obs
+  loglik
+  
+  plot(cumsum(loglik), this_user_viterbi$alpha[cbind(1:length(j),this_user_viterbi$s)])
+  abline(a = -5, b = 1)
+  
+  plot(this_user_viterbi$alpha[cbind(1:length(j),this_user_viterbi$s)], col = hsmm$states$colors[this_user_viterbi$s], pch = 16, cex = 1)
+  points(cumsum(loglik)-5, pch = 16, cex = 0.5)
+  
+  plot(loglik, col = hsmm$states$colors[this_user_viterbi$s], pch = 16, cex = 0.5)
+  plot(exp(loglik), col = hsmm$states$colors[this_user_viterbi$s], pch = 16, cex = 0.5)
+  
+  
+  # summary cycle by cycle
+  k = which((this_user_viterbi$s == 1) & (dplyr::lag(this_user_viterbi$s) != 1))
+  kr = rep(0:length(k), c(k[1],diff(c(k,length(loglik)))))
+  avloglik = ave(loglik, by = kr, FUN = mean)
+  
+  # Most likely observations given the decoded states
+  most_likely_obs = sapply(1:length(loglik), function(i) hsmm_fitted$model$parms.emission$mu[[this_user_viterbi$s[i]]]) %>% t()
+  cens = 1+0*most_likely_obs
+  cens_r = 1*(!is.na(this_user_obsdata$x))
+  
+  p = sapply(1:hsmm$n_states,function(state) hsmm_fitted$model$dens.emission(x = most_likely_obs,c = cens,state,model = hsmm_fitted$model))
+  p_b = sapply(1:hsmm$n_states,function(state) hsmm_fitted$model$dens.emission(x = most_likely_obs,c = cens_r,state,model = hsmm_fitted$model))
+  p_r = sapply(1:hsmm$n_states,function(state) hsmm_fitted$model$dens.emission(x = this_user_obsdata$x,c = cens_r,state,model = hsmm_fitted$model))
+  
+  loglik_obs_most_likely = p[cbind(1:nrow(p),this_user_decoding$s)] %>% log() 
+  loglik_obs_b = p_b[cbind(1:nrow(p),this_user_decoding$s)] %>% log()
+  loglik_obs_real = p_r[cbind(1:nrow(p),this_user_decoding$s)] %>% log()
+  
+  p[cbind(1:nrow(p),this_user_decoding$s)]
+  plot(p[cbind(1:nrow(p),this_user_decoding$s)])
+  plot(p_r[cbind(1:nrow(p),this_user_decoding$s)])
+  plot(this_user_decoding$p_i[cbind(1:nrow(p),this_user_decoding$s)])
+  
+  plot(p_r[cbind(1:nrow(p),this_user_decoding$s)], this_user_decoding$p_i[cbind(1:nrow(p),this_user_decoding$s)])
+  
+  
+  
+  loglik_r = loglik_init + loglik_trans + log_lik_sojourn + loglik_obs_real
+  
+  ideal_sojourn_per_state = apply(hsmm$sojourn, 1, which.max)
+  sojourn_i_b = cbind(state_seq, ideal_sojourn_per_state[state_seq]) %>% head(.,-1)
+  log_lik_sojourn_b = loglik_base
+  log_lik_sojourn_b[ cumsum(state_sojourn) %>%  head(.,-1)] = hsmm$sojourn[sojourn_i_b] %>%  log() 
+  
+  loglik_b = loglik_init + loglik_trans + log_lik_sojourn_b + loglik_obs_b
+  loglik_b2 = loglik_init + loglik_trans + log_lik_sojourn + loglik_obs_b
+  
+  plot(cumsum(loglik_r), this_user_viterbi$alpha[cbind(1:length(j),this_user_viterbi$s)])
+  abline(a = -5, b = 1)
+  
+  avloglik_r = ave(loglik_r, by = kr, FUN = mean)
+  avloglik_b = ave(loglik_b, by = kr, FUN = mean)
+  
+  plot(avloglik_r, type = "l", ylim = range(avloglik_r,avloglik_b))
+  points(avloglik_b, type = "l", col = "blue")
+  plot(exp(avloglik_r - avloglik_b), type = "l", ylim = c(0,1))
+  
+  minloglik_r = ave(loglik_r, by = kr, FUN = min)
+  minloglik_b = ave(loglik_b, by = kr, FUN = min)
+  
+  plot(minloglik_r, type = "l", ylim = range(minloglik_r,minloglik_b, 1))
+  points(minloglik_b, type = "l", col = "blue")
+  points(exp(minloglik_r - minloglik_b), type = "l", col = "green3")
+  
+  plot(exp(avloglik_r - avloglik_b), type = "l", ylim = c(0,1))
+  points(exp(minloglik_r - minloglik_b), type = "l", col = "green3",ylim = c(0,1))
+  
+  plot(loglik_r, type = "l", ylim = range(loglik_r,loglik_b))
+  points(loglik_b, type = "l", col = "blue")
+  plot(exp(loglik_r - loglik_b) %>% pmin(1,.), type = "l", ylim = c(0,1))
+  #plot(exp(loglik_r - loglik_b) %>% pmin(1,.), type = "p", pch = 16, cex = 0.5, col = hsmm$states$colors[this_user_decoding$s], ylim = c(0,1))
+  
+}
+
+
+
+```
+
+
+
+
+
+

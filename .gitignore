@@ -1,0 +1,19 @@
+# Ignore html files
+*.html
+
+# ignore all folders that are caches from the .Rmd
+*_cache/
+*_files/
+
+# ignore deprecated files
+*deprecated/
+
+# ignore DS_store files
+*.DS_Store
+
+Code/.Rhistory
+
+
+*.Rdata
+
+*vignettes/

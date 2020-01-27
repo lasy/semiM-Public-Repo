@@ -1,0 +1,239 @@
+---
+title: "Manual labelling"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+```{r mlab setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE)
+```
+
+```{r mlab setup, include = FALSE, eval = TRUE, cache = FALSE}
+source("Scripts/00_setup.R")
+```
+
+# Manual labelling of time-series and manual validation of decoded states 
+
+
+```{r mlab loading the data and model}
+
+# model
+load(file = paste0(IO$tmp_data,"hsmm.Rdata"), verbose = TRUE)
+
+# observations
+days = read_feather(path = str_c(IO$tmp_data,"days_selected_users.feather"))
+
+# manual labels
+manual_labels = read_feather(path = paste0(IO$output_data, "manual_labels.feather"))
+
+# decoded labels
+folder = paste0(IO$output_data,"decoding/")
+viterbi_states_init = read_feather(path = paste0(folder,"viterbi_states_init.feather"))
+smoothed_states_init = read_feather(path = paste0(folder,"smoothed_states_init.feather"))
+state_prob_long_init = read_feather(path = paste0(folder,"smoothed_probs_init.feather"))
+
+# decoded labels fitted model
+folder = paste0(IO$output_data,"decoding/")
+viterbi_states_fitted = read_feather(path = paste0(folder,"viterbi_states_fitted.feather"))
+smoothed_states_fitted = read_feather(path = paste0(folder,"smoothed_states_fitted.feather"))
+state_prob_long_fitted = read_feather(path = paste0(folder,"smoothed_probs_fitted.feather"))
+
+```
+
+
+```{r mlab initial set-up for the app}
+
+pre_app_labels = manual_labels
+
+users = unique(days$user_id)
+user = users[1]
+
+this_user_days = days %>%  dplyr::filter(user_id == user)
+abs_max = max(this_user_days$rel_date)
+
+```
+
+
+
+```{r mlab interactive shiny app}
+
+ui <- fluidPage(
+  
+  selectInput(width = 380, inputId = "user", label = "Select user",choices = users, selected = user),
+  
+  hr(),
+  
+  h4("Manual labelling"),
+  fluidRow(title = "Manual labelling",
+           column(width = 3, selectInput(inputId = "states",label = "States", choices = hsmm$states$names)),
+           column(width = 2, style = "margin-top: 25px;", actionButton(inputId = "Save", label = "Save this label")),
+           column(width = 4, style = "margin-top: 25px;", actionButton(inputId = "Erase", label = "Erase manual labels at the selected positions"))
+  ),
+  
+  hr(),
+  
+  h4("Decoding validation"),
+  fluidRow(title = "Decoding validation",
+           column(width = 3, selectInput(inputId = "decoding_type", label = "Select decoding type", 
+                                         choices = c("initial model","fitted model"),selected = "fitted model")),
+           column(width = 9, style = "margin-top: 25px;", actionButton(inputId = "Validate", 
+                                                                       label = "Validate the decoding at the selected positions"))
+  ),
+  
+  hr(),
+  
+  plotOutput(outputId = "hist_viz"),
+  
+  fluidRow(
+    column(
+      sliderInput(inputId = "selection_range", label = "Selection range",min = 1, max = min(abs_max/2, 365), value = c(5,20), step = 1, round = TRUE, width = '100%'),
+      offset = 1, width = 11
+    )
+  ),
+  
+  sliderInput(inputId = "time_range", label = "Zoom Range",min = 1, max = abs_max, value = c(1,min(abs_max/2, 365)), step = 1, round = TRUE, width = '100%')
+)
+
+
+server <- function(input, output, session){
+  
+  
+  # Updating user info
+  observeEvent(input$user,{
+    user <<- input$user
+  })
+  
+  # Update the zoom sliders when we change user
+  observe({
+    abs_max = max(days$rel_date[which(days$user_id == input$user)], na.rm = TRUE)
+    maxi_slider = min(c(365,abs_max,abs_max/5))
+    updateSliderInput(session, "time_range", max = abs_max, value = c(1, maxi_slider))
+  })
+  
+  # Update the selection_range slider in function of the zoom
+  observe({
+    min_zoom = input$time_range[1]
+    max_zoom = input$time_range[2]
+    updateSliderInput(session, "selection_range", min = min_zoom, max = max_zoom)
+  })
+  
+  # Manual labels
+  observeEvent(input$Save,{
+    this_label = isolate({
+      data.frame(user_id = input$user, 
+                 state_name = input$states,
+                 color = hsmm$states$colors[match(input$states, hsmm$states$names)],
+                 rel_date = input$selection_range[1]:input$selection_range[2],
+                 label_id = as.character(now()),
+                 type = "M",
+                 key = str_c(input$user,"_",input$selection_range[1]:input$selection_range[2]),
+                 stringsAsFactors = FALSE);
+    })
+    # remove existing labels at the same position
+    j = which((manual_labels$user_id == this_label$user_id) &
+                (manual_labels$rel_date %in% this_label$rel_date))
+    if(length(j)>0){ manual_labels <<- manual_labels[-j,] }
+    # add the new labels
+    manual_labels <<- rbind(manual_labels, this_label)
+  })
+  
+  observeEvent(input$Erase,{
+    j = isolate({
+      which((manual_labels$user_id == input$user)&
+              manual_labels$rel_date %in% (input$selection_range[1]:input$selection_range[2]))
+    })
+    if(length(j)>0){ manual_labels <<- manual_labels[-j,] }
+  })
+  
+  # Validating decoded labels
+  observeEvent(input$Validate,{
+    this_label = isolate({
+      this_user_smoothed_states %>% 
+        dplyr::filter(
+          user_id == input$user,
+          rel_date %in% input$selection_range[1]:input$selection_range[2]
+        ) %>% 
+        mutate(type = "V",
+               label_id = as.character(now()),
+               key = str_c(user_id, "_",rel_date)) %>% 
+        dplyr::select(user_id, state_name, color, rel_date, label_id, type, key)
+    })
+    # remove existing labels at the same position
+    j = which((manual_labels$user_id == this_label$user_id) &
+                (manual_labels$rel_date %in% this_label$rel_date))
+    if(length(j)>0){ manual_labels <<- manual_labels[-j,] }
+    # add the new labels
+    manual_labels <<- rbind(manual_labels, this_label)
+  }) 
+  
+  
+  # VIZ 
+  output$hist_viz = renderPlot({
+    input$Save
+    input$Erase
+    input$Validate
+    input$user
+    input$decoding_type
+    x1 = input$time_range[1]; x2 = input$time_range[2]
+    j = which((days$user_id == user) & (days$rel_date %in% x1:x2))
+    this_user_days = days[j,]
+    this_user_labels = manual_labels[manual_labels$user_id == user,]
+    if(input$decoding_type == "initial model"){
+      this_user_viterbi_states <<- viterbi_states_init %>% dplyr::filter(user_id == user, rel_date %in% x1:x2)
+      this_user_smoothed_states <<- smoothed_states_init %>% dplyr::filter(user_id == user, rel_date %in% x1:x2)
+      this_user_smoothed_probs <<- state_prob_long_init  %>% dplyr::filter(user_id == user, rel_date %in% x1:x2)
+    }else{
+      this_user_viterbi_states <<- viterbi_states_fitted %>% dplyr::filter(user_id == user, rel_date %in% x1:x2)
+      this_user_smoothed_states <<- smoothed_states_fitted %>% dplyr::filter(user_id == user, rel_date %in% x1:x2)
+      this_user_smoothed_probs <<- state_prob_long_fitted  %>% dplyr::filter(user_id == user, rel_date %in% x1:x2)
+    }
+    states_labels_list = list(manual_labels = this_user_labels, 
+                              viterbi = this_user_viterbi_states,
+                              smoothed = this_user_smoothed_states,
+                              smoothed_probs = this_user_smoothed_probs)
+    current_selection = data.frame(user_id = input$user,
+                                   state = input$states, color = hsmm$states$colors[match(input$states, hsmm$states$names)],
+                                   start = input$selection_range[1]-0.5, end = input$selection_range[2]+0.5)
+    
+    g = plot_user_history(d = this_user_days, states_labels_list = states_labels_list, current_selection = current_selection, show_all_variables = TRUE)
+    print(g)
+  })
+  
+}
+shinyApp(ui = ui, server = server)
+
+
+# labels_csv = paste0(IO$tmp_data,"labels.csv")
+# if(!file.exists(labels_csv)){write_csv(labels, path = labels_csv)}
+
+```
+
+
+```{r mlab check and save manual labels}
+
+# Making sure each day has only one manual label 
+mlM = manual_labels %>% dplyr::filter(type == "M")
+if(nrow(unique(mlM %>%  select(user_id, rel_date))) != nrow(mlM)){
+  cat("duplicated manual labels\n")
+  mlM = mlM %>%  arrange(user_id, rel_date, desc(label_id))
+  d = duplicated(mlM %>% select(user_id, rel_date)) %>%  which()
+  mlM = mlM[-d,]
+  manual_labels = rbind(mlM, manual_labels %>%  dplyr::filter(type != "M"))
+}
+
+
+# Save labels
+write_feather(manual_labels, path = paste0(IO$output_data, "manual_labels.feather"))
+
+```
+
+

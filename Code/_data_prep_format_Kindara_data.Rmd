@@ -1,0 +1,407 @@
+---
+title: "Format Kindara data"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+```{r fkd setup, include=FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE)
+source("Scripts/00_setup.R")
+```
+
+## Format Kindara data
+
+### Convert file format from csv into feather 
+
+(for efficiency at reading/writing operations)
+
+```{r fkd read csv and convert to feather, warning=FALSE}
+input_folder = paste0(IO$input_data, "Days/")
+output_folder = paste0(IO$tmp_data,"Days_feather_from_csv/")
+if(!dir.exists(output_folder)){dir.create(output_folder)}
+
+files = list.files(input_folder)
+
+tic()
+cl = makeCluster(par$n_cores, outfile="")
+registerDoParallel(cl)
+
+users_from_days = foreach(file = files, .combine = rbind, .packages = c("feather","readr","plyr","dplyr")) %dopar%{
+  
+  days = read_tsv(file = paste0(input_folder,file),
+                  col_types = cols(
+                    id = col_character(),
+                    date = col_date(format = "%Y-%m-%d %H:%M:%S"),
+                    first_day = col_logical(),
+                    conception = col_logical(),
+                    temperature = col_double(),
+                    temp_time = col_datetime(format = ""),
+                    temp_source = col_integer(),
+                    questionable_temp = col_logical(),
+                    no_fluid = col_logical(),
+                    fluid_sticky = col_integer(),
+                    fluid_creamy = col_integer(),
+                    fluid_eggwhite = col_integer(),
+                    fluid_watery = col_integer(),
+                    cervix_height = col_integer(),
+                    cervix_openness = col_integer(),
+                    cervix_firmness = col_integer(),
+                    opk = col_integer(),
+                    preg_test = col_integer(),
+                    ferning = col_skip(),
+                    prg_test = col_skip(),
+                    menstruation = col_integer(), 
+                    spotting = col_logical(),
+                    sex = col_integer(),
+                    vaginal_sensation = col_skip(), #col_integer(),
+                    custom = col_character(),
+                    moods = col_character(),
+                    symptoms = col_character()
+                  ))
+  
+  # colnames
+  colnames(days)[colnames(days) == "id"] = "user_id"
+  
+  new_file_name = gsub("csv","feather",file)
+  write_feather(days, path = paste0(output_folder,new_file_name))
+  
+  users = data.frame(user_id = unique(days$user_id), original_file = file)
+  return(users)
+}
+
+stopImplicitCluster()
+toc()
+
+
+```
+
+We also want to make sure that all the data from a single user are in the same file.
+
+```{r fkd unique users}
+
+users_from_days_unique = aggregate(original_file ~ user_id, users_from_days, function(x) paste0(sort(x), collapse = ",") )
+dim(users_from_days_unique)
+head(users_from_days_unique)
+users_from_days_unique$nb = 1:nrow(users_from_days_unique)
+
+```
+
+
+```{r fkd users table}
+
+users_accounts = read_tsv(paste0(IO$input_data,"accounts.csv"),
+                          col_types = cols_only(
+                            id = col_character(),
+                            objective = col_character(),
+                            birth_day = col_datetime(format = ""),
+                            average_cycle = col_double(),
+                            average_luteal = col_double(),
+                            average_period = col_double()
+                            #avr_follicular_temp = col_double(), # no data in these rows
+                            #avr_luteal_temp = col_double() # no data in these rows
+                          )
+)
+colnames(users_accounts)[colnames(users_accounts) == "id"] = "user_id"
+users_accounts$birth_year = year(users_accounts$birth_day)
+users_accounts = users_accounts %>% dplyr::select(-birth_day)
+dim(users_accounts)
+dim(users_from_days)
+dim(users_from_days_unique)
+
+# removing duplicates in accounts provided by kindara
+j = which(duplicated(users_accounts))
+length(j)
+if(length(j)>0){users_accounts = users_accounts[-j,]}
+
+
+j = which(duplicated(users_accounts$user_id))
+duplicated_users = users_accounts$user_id[j]
+
+if(length(duplicated_users)>0){
+  
+  # first the users with unique rows
+  users_accounts_tmp = users_accounts[which(!(users_accounts$user_id %in% duplicated_users)),]
+  users_accounts_tmp$objectives = users_accounts_tmp$objective
+  users_accounts_tmp$birth_years = users_accounts_tmp$birth_year
+  users_accounts_tmp$duplicated = FALSE
+  
+  # then, the users with several rows
+  users_accounts_tmp2 = ddply(users_accounts[which(users_accounts$user_id %in% duplicated_users),],
+                              .(user_id),
+                              summarize,
+                              objective = first(objective),
+                              objectives = paste0(objective, collapse = ","),
+                              birth_year = first(birth_year[!is.na(birth_year)]),
+                              birth_years = paste0(birth_year[!is.na(birth_year)], collapse = ","),
+                              average_cycle = mean(average_cycle),
+                              average_luteal = mean(average_luteal),
+                              average_period = mean(average_period),
+                              duplicated = TRUE)
+  
+  
+  m = match(colnames(users_accounts_tmp), colnames(users_accounts_tmp2))
+  users_accounts_unique = rbind(users_accounts_tmp[,m], users_accounts_tmp2)
+  dim(users_accounts_unique)
+  
+  users = merge(users_from_days_unique,users_accounts_unique, by = "user_id", all.x = TRUE)
+}else{
+  users = merge(users_from_days_unique,users_accounts, by = "user_id", all.x = TRUE)
+}
+
+
+
+# merging and keeping only the users that have tracking data
+
+users = merge(users_from_days_unique,users_accounts_unique, by = "user_id", all.x = TRUE)
+dim(users)
+users = users[order(users$nb),]
+head(users)
+
+write_feather(users, path = paste0(IO$output_data, "users.feather"))
+
+```
+
+### Creating user batches and re-organising the days table by batches
+
+```{r fkd batches}
+users$batch = as.numeric(gsub("\\.","",substr(users$original_file,5,6)))
+```
+
+
+```{r fkd filter days and split by batches}
+
+input_folder = paste0(IO$tmp_data,"Days_feather_from_csv/")
+tmp_folder = paste0(IO$tmp_data,"Days_splitted_in_batches/")
+if(!dir.exists(tmp_folder)){dir.create(tmp_folder)}
+
+files = list.files(input_folder)
+
+tic()
+cl = makeCluster(par$n_cores)
+registerDoParallel(cl)
+
+ok = foreach(file = files, .packages = "feather") %dopar%{
+  
+  full_days = read_feather(path = paste0(input_folder,file)) 
+  
+  # split by batches
+  for(b in unique(users$batch[users$user_id %in% full_days$user_id])){
+    days = full_days[full_days$user_id %in% users$user_id[users$batch == b],]
+    days$batch = b
+    write_feather(days, path = paste0(tmp_folder,"batch_",b,"_",file))
+  }
+  
+}
+stopImplicitCluster()
+toc()
+```
+
+
+
+```{r fkd re-assemble batches}
+
+input_folder = paste0(IO$tmp_data,"Days_splitted_in_batches/")
+output_folder = paste0(IO$output_data,"Days/")
+tmp_folder = paste0(IO$tmp_data, "Days_reassembled_batches/")
+if(dir.exists(input_folder)){unlink(output_folder, recursive = TRUE);dir.create(output_folder)}
+if(!dir.exists(tmp_folder)){dir.create(tmp_folder)}
+
+files = list.files(input_folder)
+
+tic()
+catch = foreach(b = unique(users$batch), .combine = rbind) %do%{
+  
+  cl = makeCluster(par$n_cores)
+  registerDoParallel(cl)
+  
+  batch_files = files[grep(paste0("batch_",b,"_day"), files)]
+  
+  days = foreach(file = batch_files, .combine = rbind, .packages = "feather") %dopar%{
+    days = read_feather(path = paste0(input_folder,file))
+    return(days)
+  }
+  stopImplicitCluster()
+  
+  # checking for duplicated rows
+  dim(days)
+  d = duplicated(days)
+  j = which(d)
+  if(length(j)>0){
+    days = days[-j,]
+  }
+  dim(days)
+  
+  write_feather(days, path = paste0(output_folder,"days_",b,".feather"))
+  file.copy(from = paste0(output_folder,"days_",b,".feather"), to = paste0(tmp_folder,"days_",b,".feather"), overwrite = TRUE)
+  
+  
+  return(TRUE)
+}
+toc()
+```
+
+
+### Transform the tracking variables
+
+
+```{r fkd transforming the tracking variables}
+
+input_folder = paste0(IO$tmp_data, "Days_reassembled_batches/")
+tmp_folder = paste0(IO$tmp_data,"Days_formatted/")
+output_folder = paste0(IO$output_data,"Days/")
+if(!dir.exists(tmp_folder)){dir.create(tmp_folder)}
+if(dir.exists(input_folder)){unlink(output_folder, recursive = TRUE);dir.create(output_folder)}
+
+files = list.files(input_folder)
+
+tic()
+cl = makeCluster(par$n_cores, outfile="")
+registerDoParallel(cl)
+
+catch = foreach(file = files, .combine = rbind, .packages = c("feather","readr","plyr","dplyr")) %dopar%{
+  
+  days = read_feather(path=paste0(input_folder, file))
+  
+  # formating pregnancy tests
+  days = mutate(days,
+                preg_test_o = preg_test,
+                preg_test = ifelse(preg_test == 2, -1, preg_test))
+  
+  # formating LH tests
+  days = mutate(days,
+                opk_o = opk,
+                opk = ifelse(opk == 2, -1, opk))
+  
+  # bleeding : merging spotting and menstruation
+  days = mutate(days,
+                bleeding = menstruation + ifelse(spotting & (menstruation==0),0.5,0))
+  
+  # mucus: merging the different types of mucus
+  days$mucus_type = c(NA,"none")[days$no_fluid+1]
+  days$mucus_type[which(days$fluid_creamy>0)] = paste0("creamy_",c("little","medium","lots")[days$fluid_creamy[which(days$fluid_creamy>0)]])
+  days$mucus_type[which(days$fluid_sticky>0)] = paste0("sticky_",c("little","medium","lots")[days$fluid_sticky[which(days$fluid_sticky>0)]])
+  days$mucus_type[which(days$fluid_eggwhite>0)] = paste0("eggwhite_",c("little","medium","lots")[days$fluid_eggwhite[which(days$fluid_eggwhite>0)]])
+  days$mucus_type[which(days$fluid_watery>0)] = paste0("watery_",c("little","medium","lots")[days$fluid_watery[which(days$fluid_watery>0)]])
+  
+  # mucus: splitting in two variables: category and amount
+  days$mucus_category = sub("_.*","",days$mucus_type)
+  days$mucus_category = factor(days$mucus_category, levels = c("none","sticky","creamy","eggwhite","watery"))
+  days$mucus_amount = match(sub(".*_","",days$mucus_type),c("none","little","medium","lots"))-1
+  
+  # sex: actual labels
+  days$sex_num = days$sex
+  sex = c("protected","unprotected","withdrawal","insemination")
+  days$sex = c(NA, sex)[days$sex_num + 1]
+  days$sex = factor(days$sex, levels = sex)
+  sex_abbr = c("prot","unprot","WD","insem")
+  days$sex_short = factor(c(NA,sex_abbr)[days$sex_num + 1], levels = sex_abbr)
+  
+  # LH: rename the column
+  days$LH = days$opk
+  
+  # Compute the relative date for each user
+  agg = aggregate(date ~ user_id, days, min)  
+  min_dates = agg$date[match(days$user_id, agg$user_id)]
+  days$rel_date = as.numeric(days$date - min_dates)+1
+  
+  write_feather(days, path = paste0(output_folder,file))
+  file.copy(from =  paste0(output_folder,file), to =  paste0(tmp_folder,file), overwrite = TRUE)
+}
+
+stopImplicitCluster()
+toc()
+
+
+
+```
+
+### Cycles table
+
+
+```{r fkd cycles table}
+
+input_folder = paste0(IO$input, "Cycles/")
+
+files = list.files(input_folder)
+
+tic()
+cycles = foreach(file = files, .combine = rbind, .packages = c("feather","readr","plyr","dplyr")) %do%{
+  cat(file,"\n")
+  cycles = read_tsv(file=paste0(input_folder, file))
+  colnames(cycles)[which(colnames(cycles)=="id")] = "user_id"
+  j = which(cycles$user_id %in% users$user_id)
+  cycles = cycles[j,]
+  return(cycles)
+}
+toc()
+
+write_feather(cycles, path = paste0(IO$output_data, "cycles.feather"))
+
+```
+
+### Augmenting the users tables
+
+
+```{r fdk augmenting users}
+
+
+input_folder = paste0(IO$tmp_data, "Days_formatted/")
+
+files = list.files(input_folder)
+
+tic()
+cl = makeCluster(par$n_cores, outfile="")
+registerDoParallel(cl)
+
+users_agg = foreach(file = files, .combine = rbind, .packages = c("feather","readr","plyr","dplyr")) %dopar%{
+  
+  days = read_feather(path=paste0(input_folder, file))
+  
+  users_agg  = ddply(days,
+                     .(user_id),
+                     summarize,
+                     date_first_obs = min(date),
+                     date_last_obs = max(date),
+                     n_days_obs = length(unique(date)),
+                     n_temp = sum(!is.na(temperature)),
+                     n_mucus = sum(!is.na(mucus_type)),
+                     n_sex = sum(sex>0, na.rm = TRUE),
+                     n_preg_test = sum(preg_test %in% c(-1,1)),
+                     n_pos_preg_test = sum(preg_test == 1, na.rm = TRUE),
+                     n_LH_test = sum(opk %in% c(-1,1))
+  ) 
+  return(users_agg)
+}
+
+stopImplicitCluster()
+toc()
+
+users_agg[is.na(users_agg)] = 0
+
+dim(users_agg)
+dim(users)
+
+cols_to_add = colnames(users_agg[,-1])
+m = match(users_agg$user_id, users$user_id)
+users$user_id = as.character(users$user_id)
+head(users$user_id)
+head(users_agg$user_id[m])
+for(col_to_add in cols_to_add){
+  eval(parse(text = paste0("users$",col_to_add," = users_agg$",col_to_add,"[m]")))
+}
+
+write_feather(users, path = paste0(IO$output_data, "users.feather"))
+
+```
+
+
+

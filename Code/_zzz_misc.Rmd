@@ -1,0 +1,763 @@
+---
+title: "Misc"
+author: "Laura Symul"
+date: "11/11/2019"
+output: html_document
+---
+
+
+#### Misc
+
+```{r}
+
+
+obs$state = labels$state_name[match(obs$key, labels$key)] %>% factor(.,levels = hsmm$states$names)
+
+ggplot(obs, aes(x = state, y = bleeding_mv_avg_5d))+
+  coord_flip()+
+  geom_boxplot()
+
+
+ggplot(obs, aes(x = state, y = bleeding_mv_avg_15d))+
+  coord_flip()+
+  geom_boxplot()
+
+
+ggplot(obs, aes(x = state, y = bleeding_mv_avg_90d))+
+  coord_flip()+
+  geom_boxplot()
+
+
+ggplot(obs, aes(x = state, y = bleeding_mv_avg_150d))+
+  coord_flip()+
+  geom_boxplot()
+
+```
+
+
+
+For the temperature, the mucus score, and gap length, we will use the actual data to estimate their emission probabilities
+
+```{r hsmm loading a sample of the data to evaluate the emission probabilities}
+
+s_days_file = paste0(IO$tmp_data,"s_days.feather")
+if(!file.exists(s_days_file) | FALSE ){
+  
+  cycles = read_feather(path = paste0(IO$output_data,"cycles.feather"))
+  users = read_feather(path = paste0(IO$output_data,"users.feather"))
+  
+  # we will use data from a subset of cycles of length 23-45
+  j = which((cycles$cycle_length %in% 23:45) & (users$batch[match(cycles$user_id, users$user_id)] %in% 1:10))
+  cycle_ids  = cycles$cycle_id[j]
+  
+  input_folder = paste0(IO$output_data,"Days/")
+  days_files = paste0("days_",1:10,".feather")
+  
+  s_days = foreach(file = days_files, .combine = rbind) %do% {
+    cat(file, "\n")
+    days = read_feather(paste0(input_folder,file))
+    j = which((days$cycle_id %in% cycle_ids) & 
+                ((days$cycleday <= 28) | (days$cycleday_from_end >= -28)) &
+                (!(is.na(days$temp) & is.na(days$mucus)) & 
+                   (abs(days$temp) <= 15))
+    )
+    #cat(range(days$temp, na.rm = TRUE), "\n")
+    days = days[j,]
+    return(days)
+  }
+  
+  write_feather(s_days, path = s_days_file)
+}else{
+  s_days = read_feather(path = s_days_file) 
+}
+```
+
+
+
+```{r hsmm emission what is observed in presumed ovulatory cycles}
+
+forward_backward_file =  paste0(IO$tmp_data, "forward_and_backward_agg.Rdata")
+if(!file.exists(forward_backward_file) | FALSE){
+  
+  forward_agg =  ddply(s_days[which(s_days$cycleday <= 28),],
+                       .(cycleday),
+                       .fun = summarize,
+                       cycleday_type = "cycleday",
+                       bleeding_mean = mean(bleeding, na.rm = TRUE),
+                       bleeding_sd = sd(bleeding, na.rm = TRUE),
+                       temp_mean = mean(temp, na.rm = TRUE),
+                       temp_sd = sd(temp, na.rm = TRUE),
+                       mucus_mean = mean(mucus, na.rm = TRUE),
+                       mucus_sd = sd(mucus, na.rm = TRUE),
+                       LH_mean = mean(LH, na.rm = TRUE),
+                       LH_sd = sd(LH, na.rm = TRUE),
+                       preg_test_mean = mean(preg_test_score, na.rm = TRUE),
+                       preg_test_sd = sd(preg_test_score, na.rm = TRUE),
+                       gap_mean = mean(gap, na.rm = TRUE),
+                       gap_sd = sd(gap, na.rm = TRUE),
+                       first_day_mean = mean(first_day, na.rm = TRUE),
+                       first_day_sd = sd(first_day, na.rm = TRUE)
+  )
+  
+  backward_agg =  ddply(s_days[which(s_days$cycleday_from_end >= -28),],
+                        .(cycleday_from_end),
+                        .fun = summarize,
+                        cycleday_type = "cycleday_from_end",
+                        bleeding_mean = mean(bleeding, na.rm = TRUE),
+                        bleeding_sd = sd(bleeding, na.rm = TRUE),
+                        temp_mean = mean(temp, na.rm = TRUE),
+                        temp_sd = sd(temp, na.rm = TRUE),
+                        mucus_mean = mean(mucus, na.rm = TRUE),
+                        mucus_sd = sd(mucus, na.rm = TRUE),
+                        LH_mean = mean(LH, na.rm = TRUE),
+                        LH_sd = sd(LH, na.rm = TRUE),
+                        preg_test_mean = mean(preg_test_score, na.rm = TRUE),
+                        preg_test_sd = sd(preg_test_score, na.rm = TRUE),
+                        gap_mean = mean(gap, na.rm = TRUE),
+                        gap_sd = sd(gap, na.rm = TRUE),
+                        first_day_mean = mean(first_day, na.rm = TRUE),
+                        first_day_sd = sd(first_day, na.rm = TRUE)
+  )
+  colnames(backward_agg)
+  
+  save(forward_agg, backward_agg, file =forward_backward_file)
+  
+}else{
+  load(forward_backward_file, verbose = TRUE)
+}
+
+
+```
+
+
+
+```{r forward and backward agg viz}
+
+g = ggplot(backward_agg, aes(x = cycleday_from_end))+
+  geom_line(aes(y = bleeding_mean), col = "red")+
+  geom_ribbon(aes(ymin = bleeding_mean - bleeding_sd/2, ymax = bleeding_mean + bleeding_sd/2), alpha = 0.2, fill = "red")+
+  geom_line(aes(y = mucus_mean))+
+  geom_ribbon(aes(ymin = mucus_mean - mucus_sd/2, ymax = mucus_mean + mucus_sd/2), alpha = 0.2)+
+  geom_line(aes(y = temp_mean), col = "purple")+
+  geom_ribbon(aes(ymin = temp_mean - temp_sd/2, ymax = temp_mean + temp_sd/2), alpha = 0.2, fill = "purple")+
+  geom_line(aes(y = LH_mean), col = "blue")+
+  geom_ribbon(aes(ymin = LH_mean - LH_sd/2, ymax = LH_mean + LH_sd/2), alpha = 0.2, fill = "blue")+
+  geom_line(aes(y = preg_test_mean), col = "green3")+
+  geom_ribbon(aes(ymin = preg_test_mean - preg_test_sd/2, ymax = preg_test_mean + preg_test_sd/2), alpha = 0.2, fill = "green3")
+g
+
+g = ggplot(forward_agg, aes(x = cycleday))+
+  geom_line(aes(y = bleeding_mean), col = "red")+
+  geom_ribbon(aes(ymin = bleeding_mean - bleeding_sd/2, ymax = bleeding_mean + bleeding_sd/2), alpha = 0.2, fill = "red")+
+  geom_line(aes(y = mucus_mean))+
+  geom_line(aes(y = temp_mean), col = "purple")+
+  geom_ribbon(aes(ymin = mucus_mean - mucus_sd/2, ymax = mucus_mean + mucus_sd/2), alpha = 0.2)+
+  geom_ribbon(aes(ymin = temp_mean - temp_sd/2, ymax = temp_mean + temp_sd/2), alpha = 0.2, fill = "purple")+
+  geom_line(aes(y = LH_mean), col = "blue")+
+  geom_ribbon(aes(ymin = LH_mean - LH_sd/2, ymax = LH_mean + LH_sd/2), alpha = 0.2, fill = "blue")+
+  geom_line(aes(y = preg_test_mean), col = "green3")+
+  geom_ribbon(aes(ymin = preg_test_mean - preg_test_sd/2, ymax = preg_test_mean + preg_test_sd/2), alpha = 0.2, fill = "green3")
+g
+
+
+g = ggplot(backward_agg, aes(x = cycleday_from_end))+
+  geom_line(aes(y = LH_mean), col = "blue")+
+  geom_ribbon(aes(ymin = LH_mean - LH_sd/2, ymax = LH_mean + LH_sd/2), alpha = 0.2, fill = "blue")+
+  geom_line(aes(y = preg_test_mean), col = "green3")+
+  geom_ribbon(aes(ymin = preg_test_mean - preg_test_sd/2, ymax = preg_test_mean + preg_test_sd/2), alpha = 0.2, fill = "green3")
+g
+
+
+g = ggplot(forward_agg, aes(x = cycleday))+
+  geom_line(aes(y = LH_mean), col = "blue")+
+  geom_ribbon(aes(ymin = LH_mean - LH_sd/2, ymax = LH_mean + LH_sd/2), alpha = 0.2, fill = "blue")+
+  geom_line(aes(y = preg_test_mean), col = "green3")+
+  geom_ribbon(aes(ymin = preg_test_mean - preg_test_sd/2, ymax = preg_test_mean + preg_test_sd/2), alpha = 0.2, fill = "green3")
+g
+
+
+
+g = ggplot(backward_agg, aes(x = cycleday_from_end))+
+  geom_line(aes(y = gap_mean), col = "purple")+
+  geom_ribbon(aes(ymin = gap_mean - gap_sd/2, ymax = gap_mean + gap_sd/2), alpha = 0.2, fill = "purple")
+g
+
+g = ggplot(forward_agg, aes(x = cycleday))+
+  geom_line(aes(y = gap_mean), col = "purple")+
+  geom_ribbon(aes(ymin = gap_mean - gap_sd/2, ymax = gap_mean + gap_sd/2), alpha = 0.2, fill = "purple")
+g
+
+
+
+g = ggplot(backward_agg, aes(x = cycleday_from_end))+
+  geom_line(aes(y = first_day_mean), col = "black")+
+  geom_ribbon(aes(ymin = first_day_mean - first_day_sd/2, ymax = first_day_mean + first_day_sd/2), alpha = 0.2, fill = "black")
+g
+
+
+g = ggplot(forward_agg, aes(x = cycleday))+
+  geom_line(aes(y = first_day_mean), col = "black")+
+  geom_ribbon(aes(ymin = first_day_mean - first_day_sd/2, ymax = first_day_mean + first_day_sd/2), alpha = 0.2, fill = "black")
+g
+
+
+# geom_line(aes(y = anylog_mean), col = "blue")+
+# geom_ribbon(aes(ymin = anylog_mean - anylog_sd/2, ymax = anylog_mean + anylog_sd/2), alpha = 0.2, fill = "blue")
+
+
+```
+
+
+
+
+```{r hsmm emissions }
+
+bleeding_mean = c()
+bleeding_sigma = c()
+temp_mean = c()
+temp_sigma = c()
+mucus_mean = c()
+mucus_sigma = c()
+LH_mean = c()
+LH_sigma = c()
+preg_test_mean = c()
+preg_test_sigma = c()
+anylog_mean = c(1,rep(0.5,6),0.75,0.25,0.5,0.25,0.5,0.3,0.3,0.75,0)
+anylog_sigma = rep(1,16)
+#gap_mean = c(rep(1.25,length(c("M","lE","hE","preO","O","postO","lut"))),rep(50,length(c("P","PL","L","BP","B","PP","BF"))),1.25,150)
+gap_mean = c(rep(0,length(c("M","lE","hE","preO","O","postO","lut","P"))),rep(0.5,length(c("PL","L","BP","B","PP","BF"))),0,1)
+gap_sigma = c(rep(0.2,length(c("M","lE","hE","preO","O","postO","lut","P"))),rep(0.5,length(c("PL","L","BP","B","PP","BF"))),0.2,0.2)
+first_day_mean = rep(0, hsmm$n_states)
+first_day_mean[match(c("M","L","B"),hsmm$states$abbr)] = c(0.75,0.5,0.3)
+first_day_sigma = rep(0.5, hsmm$n_states)
+first_day_sigma[match(c("M","L","B"),hsmm$states$abbr)] = c(1,1,1)
+cycle_type_mean = c(rep(0, length(c("M","lE","hE","preO","O","postO","lut"))), rep(-1, c("P", "PL","BP","B","PP","BF")), 1, -1)
+cycle_type_sigma = c(1,rep(0, length(c("M","lE","hE","preO","O","postO","lut"))), rep(-1, c("P", "PL","BP","B","PP","BF")), 0.5, -1)
+
+
+# Menses
+days = 1:5
+bleeding_mean = c(bleeding_mean, mean(forward_agg$bleeding_mean[forward_agg$cycleday %in% days]))
+bleeding_sigma = c(bleeding_sigma, max(forward_agg$bleeding_sd[forward_agg$cycleday %in% days]))
+temp_mean = c(temp_mean, mean(forward_agg$temp_mean[forward_agg$cycleday %in% days]))
+temp_sigma = c(temp_sigma, max(forward_agg$temp_sd[forward_agg$cycleday %in% days]))
+mucus_mean = c(mucus_mean, mean(forward_agg$mucus_mean[forward_agg$cycleday %in% days]))
+mucus_sigma = c(mucus_sigma, max(forward_agg$mucus_sd[forward_agg$cycleday %in% days]))
+LH_mean = c(LH_mean, mean(forward_agg$LH_mean[forward_agg$cycleday %in% days]))
+LH_sigma = c(LH_sigma, max(forward_agg$LH_sd[forward_agg$cycleday %in% days]))
+preg_test_mean = c(preg_test_mean, -1)
+preg_test_sigma = c(preg_test_sigma, max(forward_agg$preg_test_sd[forward_agg$cycleday %in% days]))
+
+
+# lE
+days = 6:11
+bleeding_mean = c(bleeding_mean, mean(forward_agg$bleeding_mean[forward_agg$cycleday %in% days]))
+bleeding_sigma = c(bleeding_sigma, max(forward_agg$bleeding_sd[forward_agg$cycleday %in% days]))
+temp_mean = c(temp_mean, mean(forward_agg$temp_mean[forward_agg$cycleday %in% days]))
+temp_sigma = c(temp_sigma, max(forward_agg$temp_sd[forward_agg$cycleday %in% days]))
+mucus_mean = c(mucus_mean, mean(forward_agg$mucus_mean[forward_agg$cycleday %in% days]))
+mucus_sigma = c(mucus_sigma, max(forward_agg$mucus_sd[forward_agg$cycleday %in% days]))
+LH_mean = c(LH_mean, mean(forward_agg$LH_mean[forward_agg$cycleday %in% days]))
+LH_sigma = c(LH_sigma, max(forward_agg$LH_sd[forward_agg$cycleday %in% days]))
+preg_test_mean = c(preg_test_mean, -1)
+preg_test_sigma = c(preg_test_sigma, max(forward_agg$preg_test_sd[forward_agg$cycleday %in% days]))
+
+
+# hE
+days = -18:-15
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, max(backward_agg$bleeding_sd[backward_agg$cycleday_from_end %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, mean(backward_agg$LH_mean[backward_agg$cycleday_from_end %in% days]))
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, -1)
+preg_test_sigma = c(preg_test_sigma, max(backward_agg$preg_test_sd[backward_agg$cycleday_from_end %in% days]))
+
+
+# preO
+days = -14
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, max(backward_agg$bleeding_sd[backward_agg$cycleday_from_end %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 1)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, -1)
+preg_test_sigma = c(preg_test_sigma, max(backward_agg$preg_test_sd[backward_agg$cycleday_from_end %in% days]))
+
+
+# O
+days = -13
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, max(backward_agg$bleeding_sd[backward_agg$cycleday_from_end %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 0.8)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, mean(backward_agg$preg_test_mean[backward_agg$cycleday_from_end %in% days]))
+preg_test_sigma = c(preg_test_sigma, max(backward_agg$preg_test_sd[backward_agg$cycleday_from_end %in% days]))
+
+
+# postO
+days = -12:-11
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, max(backward_agg$bleeding_sd[backward_agg$cycleday_from_end %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 0)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, mean(backward_agg$preg_test_mean[backward_agg$cycleday_from_end %in% days]))
+preg_test_sigma = c(preg_test_sigma, max(backward_agg$preg_test_sd[backward_agg$cycleday_from_end %in% days]))
+
+
+# Lut
+days = -10:-1
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, max(backward_agg$bleeding_sd[backward_agg$cycleday_from_end %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 0)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, mean(backward_agg$preg_test_mean[backward_agg$cycleday_from_end %in% days]))
+preg_test_sigma = c(preg_test_sigma, max(backward_agg$preg_test_sd[backward_agg$cycleday_from_end %in% days]))
+days = -10:-3
+
+
+# P
+days = -6:-5
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, max(backward_agg$bleeding_sd[backward_agg$cycleday_from_end %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 0)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, 1)
+preg_test_sigma = c(preg_test_sigma, max(backward_agg$preg_test_sd[backward_agg$cycleday_from_end %in% days]))
+days = -2:-1
+
+
+# PL
+days = -6:-5
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, 1)
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 0)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, 0)
+preg_test_sigma = c(preg_test_sigma, 1)
+days = -2:-1
+
+
+# L
+days = 1:5
+bleeding_mean = c(bleeding_mean, mean(forward_agg$bleeding_mean[forward_agg$cycleday %in% days]))
+bleeding_sigma = c(bleeding_sigma, 1)
+days = -2:-1
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 0)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, -1)
+preg_test_sigma = c(preg_test_sigma, max(backward_agg$preg_test_sd[backward_agg$cycleday_from_end %in% days]))
+days = -2:-1
+
+
+# PB
+days =  -6:-5
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, 1)
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 0)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, 1)
+preg_test_sigma = c(preg_test_sigma, max(backward_agg$preg_test_sd[backward_agg$cycleday_from_end %in% days]))
+
+
+# B
+days = 1:5
+bleeding_mean = c(bleeding_mean, mean(forward_agg$bleeding_mean[forward_agg$cycleday %in% days]))
+bleeding_sigma = c(bleeding_sigma, 1)
+days =  -28:-1
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, 0)
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, 0)
+preg_test_sigma = c(preg_test_sigma, 1)
+
+
+# PP
+days =  days = 6:11
+bleeding_mean = c(bleeding_mean, mean(forward_agg$bleeding_mean[forward_agg$cycleday %in% days]))
+bleeding_sigma = c(bleeding_sigma, mean(forward_agg$bleeding_sd[forward_agg$cycleday %in% days]))
+temp_mean = c(temp_mean, mean(forward_agg$temp_mean[forward_agg$cycleday %in% days]))
+temp_sigma = c(temp_sigma, max(forward_agg$temp_sd[forward_agg$cycleday %in% days]))
+mucus_mean = c(mucus_mean, mean(forward_agg$mucus_mean[forward_agg$cycleday %in% days]))
+mucus_sigma = c(mucus_sigma, max(forward_agg$mucus_sd[forward_agg$cycleday %in% days]))
+LH_mean = c(LH_mean, 0)
+LH_sigma = c(LH_sigma, max(forward_agg$LH_sd[forward_agg$cycleday %in% days]))
+preg_test_mean = c(preg_test_mean, -1)
+preg_test_sigma = c(preg_test_sigma, 1)
+
+
+# BF
+days = 6:11
+bleeding_mean = c(bleeding_mean, mean(forward_agg$bleeding_mean[forward_agg$cycleday %in% days]))
+bleeding_sigma = c(bleeding_sigma, mean(forward_agg$bleeding_sd[forward_agg$cycleday %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[forward_agg$cycleday %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[forward_agg$cycleday %in% days]))
+mucus_mean = c(mucus_mean, mean(forward_agg$mucus_mean[forward_agg$cycleday %in% days]))
+mucus_sigma = c(mucus_sigma, max(forward_agg$mucus_sd[forward_agg$cycleday %in% days]))
+LH_mean = c(LH_mean, 0 )
+LH_sigma = c(LH_sigma, max(forward_agg$LH_sd[forward_agg$cycleday %in% days]))
+preg_test_mean = c(preg_test_mean, -1)
+preg_test_sigma = c(preg_test_sigma, 1)
+
+
+# Ano
+days = 6:11
+bleeding_mean = c(bleeding_mean, mean(forward_agg$bleeding_mean[forward_agg$cycleday %in% days]))
+bleeding_sigma = c(bleeding_sigma, mean(forward_agg$bleeding_sd[forward_agg$cycleday %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[forward_agg$cycleday %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[forward_agg$cycleday %in% days]))
+days =  days = 6:15
+mucus_mean = c(mucus_mean, mean(forward_agg$mucus_mean[forward_agg$cycleday %in% days]))
+mucus_sigma = c(mucus_sigma, max(forward_agg$mucus_sd[forward_agg$cycleday %in% days]))
+LH_mean = c(LH_mean, mean(forward_agg$LH_mean[forward_agg$cycleday %in% days]))
+LH_sigma = c(LH_sigma, max(forward_agg$LH_sd[forward_agg$cycleday %in% days]))
+preg_test_mean = c(preg_test_mean, -1)
+preg_test_sigma = c(preg_test_sigma, max(forward_agg$preg_test_sd[forward_agg$cycleday %in% days]))
+
+
+# stop
+days = -28:-1
+bleeding_mean = c(bleeding_mean, mean(backward_agg$bleeding_mean[backward_agg$cycleday_from_end %in% days]))
+bleeding_sigma = c(bleeding_sigma, mean(backward_agg$bleeding_sd[backward_agg$cycleday_from_end %in% days]))
+temp_mean = c(temp_mean, mean(backward_agg$temp_mean[backward_agg$cycleday_from_end %in% days]))
+temp_sigma = c(temp_sigma, max(backward_agg$temp_sd[backward_agg$cycleday_from_end %in% days]))
+mucus_mean = c(mucus_mean, mean(backward_agg$mucus_mean[backward_agg$cycleday_from_end %in% days]))
+mucus_sigma = c(mucus_sigma, max(backward_agg$mucus_sd[backward_agg$cycleday_from_end %in% days]))
+LH_mean = c(LH_mean, mean(backward_agg$LH_mean[backward_agg$cycleday_from_end %in% days]))
+LH_sigma = c(LH_sigma, max(backward_agg$LH_sd[backward_agg$cycleday_from_end %in% days]))
+preg_test_mean = c(preg_test_mean, 0)
+preg_test_sigma = c(preg_test_sigma, 1)
+
+
+```
+
+```{r hsmm adding emissions to hsmm states}
+
+hsmm$states$emis_bleeding_mean = bleeding_mean
+hsmm$states$emis_bleeding_sigma = bleeding_sigma
+hsmm$states$emis_temp_mean = temp_mean
+hsmm$states$emis_temp_sigma = temp_sigma
+hsmm$states$emis_mucus_mean = mucus_mean
+hsmm$states$emis_mucus_sigma = mucus_sigma
+hsmm$states$emis_LH_mean = LH_mean
+hsmm$states$emis_LH_sigma = LH_sigma
+hsmm$states$emis_preg_test_mean = preg_test_mean
+hsmm$states$emis_preg_test_sigma = preg_test_sigma
+hsmm$states$emis_anylog_mean = anylog_mean
+hsmm$states$emis_anylog_sigma = anylog_sigma
+hsmm$states$emis_gap_mean = gap_mean
+hsmm$states$emis_gap_sigma = gap_sigma
+hsmm$states$emis_first_day_mean = first_day_mean
+hsmm$states$emis_first_day_sigma = first_day_sigma
+```
+
+
+
+
+```{r hsmm emissions formatting for model spec.}
+
+obs_names = c("bleeding","temp","mucus","LH","preg_test","anylog","gap","first_day")
+hsmm$n_obs = 8
+j = 1:hsmm$n_obs
+hsmm$obs_names = obs_names[j]
+colnames_emis_mean = paste0("emis_",hsmm$obs_names,"_mean")
+k = match(colnames_emis_mean, colnames(hsmm$states))[j]
+colnames_emis_sigma = paste0("emis_",hsmm$obs_names,"_sigma")
+l = match(colnames_emis_sigma, colnames(hsmm$states))[j]
+
+
+hsmm$emission = list(mu = list(
+  as.numeric(hsmm$states[1,k]), # M
+  as.numeric(hsmm$states[2,k]), # lE
+  as.numeric(hsmm$states[3,k]), # hE
+  as.numeric(hsmm$states[4,k]), # preO
+  as.numeric(hsmm$states[5,k]), # O
+  as.numeric(hsmm$states[6,k]), # postO
+  as.numeric(hsmm$states[7,k]), # Lut
+  as.numeric(hsmm$states[8,k]), # P
+  as.numeric(hsmm$states[9,k]), # PL
+  as.numeric(hsmm$states[10,k]), # L
+  as.numeric(hsmm$states[11,k]), # PB
+  as.numeric(hsmm$states[12,k]), # B
+  as.numeric(hsmm$states[13,k]), # PP
+  as.numeric(hsmm$states[14,k]), # BF
+  as.numeric(hsmm$states[15,k]), # Ano
+  as.numeric(hsmm$states[16,k]) # stop
+),
+sigma = list(
+  diag(hsmm$states[1,l]), # M
+  diag(hsmm$states[2,l]), # lE
+  diag(hsmm$states[3,l]), # hE
+  diag(hsmm$states[4,l]), # preO
+  diag(hsmm$states[5,l]), # O
+  diag(hsmm$states[6,l]), # postO
+  diag(hsmm$states[7,l]), # Lut
+  diag(hsmm$states[8,l]), # P
+  diag(hsmm$states[9,l]), # PL
+  diag(hsmm$states[10,l]), # L
+  diag(hsmm$states[11,l]), # PB
+  diag(hsmm$states[12,l]), # B
+  diag(hsmm$states[13,l]), # PP
+  diag(hsmm$states[14,l]), # BF
+  diag(hsmm$states[15,l]), # Ano
+  diag(hsmm$states[16,l]) # stop
+))
+
+
+```
+
+
+
+#### Model declaration
+
+```{r hsmm model declaration, fig.width=15}
+
+reprod_cycles_model =  hsmmspec(
+  init = hsmm$init, 
+  trans = hsmm$trans_no_names, 
+  parms.emission = hsmm$emission, 
+  sojourn = list(shape = hsmm$states$sojourn$shape, scale = hsmm$states$sojourn$scale, type = "gamma"), 
+  dens.emission = dmvnorm.hsmm,
+  rand.emission = rmvnorm.hsmm, 
+  mstep = mstep.mvnorm)
+
+sim = simulate.hsmmspec(reprod_cycles_model, nsim = 100)
+
+```
+
+
+```{r}
+
+sim_x = data.frame(sim$x)
+colnames(sim_x) = hsmm$obs_names
+sim_x$state_num = sim$s
+sim_x$state_abbr = hsmm$states$abbr[sim$s]
+sim_x$day = 1:nrow(sim_x)
+
+sim_x_long = melt(sim_x, id.vars = c("state_num","state_abbr","day"))
+
+ggplot(sim_x_long, aes(x = day, y = value))+
+  geom_line()+
+  geom_point(aes(col = factor(state_abbr, levels = hsmm$states$abbr)))+
+  scale_color_manual(values = hsmm$states$colors)+
+  facet_grid(variable ~ ., scale = "free")+
+  ggtitle("Simulated sequence")
+
+```
+
+```{r save model}
+save(reprod_cycles_model, hsmm, file = paste0(IO$output_data,"unfitted_reprod_cycles_model.Rdata"))
+```
+
+
+
+
+```{r stop, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+
+```{r fit and predictions}
+
+reprod_cycles_model_ff = hsmmfit(x = sim, model = reprod_cycles_model, lock.d = TRUE, lock.transition = TRUE, maxit = 1, graphical = FALSE, debug = TRUE)
+
+predict_sim_viterbi = predict(object = reprod_cycles_model_ff, newdata = sim, method = "viterbi")
+table(sim$s,predict_sim_viterbi$s)
+
+
+predict_sim_smoothed = predict(object = reprod_cycles_model_ff, newdata = sim, method = "smoothed")
+table(sim$s,predict_sim_smoothed$s)
+
+```
+
+
+
+
+```{r accuracy}
+
+sum(sim$s == predict_sim_viterbi$s)/length(sim$s)
+
+sum(sim$s == predict_sim_smoothed$s)/length(sim$s)
+
+```
+
+
+
+
+```{r hsmm simulations viz, fig.width=15}
+
+
+ggplot(sim_x_long, aes(x = day, y = value))+
+  geom_line()+
+  geom_point(aes(col = factor(state_abbr, levels = hsmm$states$abbr)))+
+  scale_color_manual(values = hsmm$states$colors)+
+  facet_grid(variable ~ ., scale = "free")+
+  ggtitle("Simulated sequence")
+
+
+states_df = data.frame(day = 1:length(sim$s), simulated = sim$s, predicted_vit = predict_sim_viterbi$s, predicted_smooth = predict_sim_smoothed$s)
+states_df = melt(states_df, id.vars = "day")
+states_df$state = factor(hsmm$states$abbr[states_df$value], levels = hsmm$states$abbr)
+
+ggplot(states_df, aes(x = day, y = state, group = variable, col = variable))+
+  geom_line()+
+  scale_color_manual(values = hsmm$states$colors)+
+  theme(legend.position = "bottom")+
+  ggtitle("Simulated + predicted states")
+
+
+
+```
+
+```{r comparison of the mus, fig.width=12}
+
+
+MUs = as.data.frame(matrix(unlist(reprod_cycles_model$parms.emission$mu), nrow = hsmm$n_states, ncol = hsmm$n_obs, byrow = TRUE, dimnames = list(c(hsmm$states$abbr), c(hsmm$obs_names))))
+MUs$states = rownames(MUs)
+MUs$model = "original"
+
+fitted_MUs = as.data.frame(matrix(unlist(reprod_cycles_model_ff$model$parms.emission$mu), nrow = hsmm$n_states, ncol = hsmm$n_obs, byrow = TRUE, dimnames = list(c(hsmm$states$abbr), c(hsmm$obs_names))))
+fitted_MUs$states = rownames(fitted_MUs)
+fitted_MUs$model = "fitted"
+
+MUs = rbind(MUs, fitted_MUs)
+MUs = melt(MUs, id.vars = c("states","model"))
+MUs$states = factor(MUs$states, levels = hsmm$states$abbr)
+
+ggplot(MUs, aes(x = states, y =  value, col = states,  size = model))+
+  geom_point()+
+  facet_wrap(variable ~ ., scale = "free")+
+  scale_size_discrete(range = c(1,2))+
+  scale_color_manual(values = hsmm$states$colors)
+
+```
+
+
+
+
+
+
+
+```{r idecod confidence in decoding initial model per state}
+
+
+
+ggplot(viterbi_states_init %>% dplyr::filter(correct_decoding))+
+  geom_histogram(aes(x = loglik_b), binwidth = 0.1, fill = "red")+
+  geom_histogram(aes(x = loglik), binwidth = 0.1, fill = "blue", alpha = 0.4)+
+  facet_grid(state_num + state_name ~., scale = "free")
+
+
+ggplot(viterbi_states_init %>% dplyr::filter(correct_decoding))+
+  geom_histogram(aes(x = cs), binwidth = 0.01)+
+  facet_grid(state_num + state_name ~., scale = "free")
+
+
+
+ggplot(viterbi_states_init %>% dplyr::filter(!correct_decoding))+
+  geom_histogram(aes(x = loglik_b), binwidth = 0.1, fill = "red")+
+  geom_histogram(aes(x = loglik), binwidth = 0.1, fill = "blue", alpha = 0.4)+
+  facet_grid(state_num + state_name ~., scale = "free")
+
+
+ggplot(viterbi_states_init %>% dplyr::filter(!correct_decoding))+
+  geom_histogram(aes(x = cs), binwidth = 0.01)+
+  facet_grid(state_num + state_name ~., scale = "free")
+
+
+
+```
+
+
+
+
+
+```{r hsmm_em obs_dens, echo=FALSE}
+
+
+obs_dens_type = "binom"
+
+obs_dens_prob = c()
+obs_dens_size = rep(1,hsmm$n_states)
+
+
+high = 0.95
+mid = 0.5
+low = 0.05
+
+# menses
+obs_dens_prob = c(obs_dens_prob, high)
+# lE
+obs_dens_prob = c(obs_dens_prob, mid)
+# hE
+obs_dens_prob = c(obs_dens_prob, mid)
+# preO
+obs_dens_prob = c(obs_dens_prob, low)
+# O
+obs_dens_prob = c(obs_dens_prob, low)
+# postO
+obs_dens_prob = c(obs_dens_prob, low)
+# lut
+obs_dens_prob = c(obs_dens_prob, low)
+# P
+obs_dens_prob = c(obs_dens_prob, high/2)
+# PL
+obs_dens_prob = c(obs_dens_prob, low)
+# L
+obs_dens_prob = c(obs_dens_prob, high/2)
+# PB1
+obs_dens_prob = c(obs_dens_prob, low)
+# PB2
+obs_dens_prob = c(obs_dens_prob, 0)
+# PB3
+obs_dens_prob = c(obs_dens_prob, 0)
+# B
+obs_dens_prob = c(obs_dens_prob, high/2)
+# PP
+obs_dens_prob = c(obs_dens_prob, 0)
+# BF
+obs_dens_prob = c(obs_dens_prob, 0)
+# ano
+obs_dens_prob = c(obs_dens_prob, high)
+```
+
+```{r}
+obs_dens_prob 
+```

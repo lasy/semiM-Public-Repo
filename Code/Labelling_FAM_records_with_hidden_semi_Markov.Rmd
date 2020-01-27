@@ -1,0 +1,51 @@
+---
+title: "Labelling self-tracked menstrual health records with hidden semi-Markov model"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+
+```{r main setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = FALSE)
+source("Scripts/00_setup.R")
+```
+
+
+```{r child = '_HsMm_Introduction.Rmd', cache=TRUE}
+```
+
+
+
+
+```{r child = '_HsMm_model_specifications.Rmd', cache=TRUE}
+```
+
+
+```{r child = '_HsMm_model_specifications_emission_probs.Rmd', cache=TRUE}
+```
+
+
+
+
+```{r child = '_HsMm_initial_decoding_and_fitting.Rmd', cache=TRUE}
+```
+
+
+
+
+```{r child = '_HsMm_decoding.Rmd', cache=TRUE}
+```
+
+
+
+```{r child = '_HsMm_notes.Rmd', cache=TRUE}
+```
