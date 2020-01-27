@@ -1,6 +1,9 @@
 # Ignore html files
 *.html
 
+# Ignore some Rmd files
+*_zzz_misc.Rmd
+
 # ignore all folders that are caches from the .Rmd
 *_cache/
 *_files/
