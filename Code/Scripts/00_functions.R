@@ -3,6 +3,65 @@ source("Scripts/00_functions_viz.R")
 lu = function(x)length(unique(x))
 
 
+sigmoid = function(x, x0, slope){
+  y = 1/(1+exp(-slope*(x-x0)))
+  return(y)
+}
+
+
+
+event_accuracy = function(decoding, manual_labels, events){
+  
+  event_accuracy = foreach(event = events, .combine = bind_rows) %do% {
+    if(event == "Ovu"){
+      j = which(manual_labels$state_name == "Ovu")
+    }else if(event %in% c("Birth","Loss")){
+      jj = which(manual_labels$state_name == event);
+      j = jj[which(c(0, diff(manual_labels$rel_date[jj]))!=1)]
+    }else{stop = "unknown event\n"}
+    
+    ml = manual_labels[j,]
+    
+    this_event_accuracy = foreach(i = 1:nrow(ml), .combine = bind_rows) %do% {
+      D = decoding %>% dplyr::filter(user_id == ml$user_id[i])
+      if(event %in% c("Birth","Loss")){
+        jj = which(D$state_name == event)
+        j = jj[which(c(0, diff(D$rel_date[jj]))!=1)]
+        D = D[j,]
+      }else{
+        D = D %>% dplyr::filter(state_name == event)
+      }
+      d = D %>% dplyr::filter(rel_date %in% (-15:15+ml$rel_date[i]))
+      
+      if(nrow(d) == 0){
+        decoded_rel_date = NA
+        time_diff = - 17
+      }else if(nrow(d)>1){
+        decoded_rel_date = d$rel_date[which.min(abs(d$rel_date - ml$rel_date[i]))]
+        time_diff = decoded_rel_date - ml$rel_date[i] 
+      }else{
+        decoded_rel_date = d$rel_date
+        time_diff =  decoded_rel_date - ml$rel_date[i]
+      }
+      acc = data.frame(event = event, 
+                       state_name = ml$state_name[i],
+                       user_id = ml$user_id[i], 
+                       labelled_rel_date = ml$rel_date[i], 
+                       decoded_rel_date = decoded_rel_date,
+                       time_diff = time_diff, 
+                       stringsAsFactors = FALSE)
+      return(acc)
+    }
+    return(this_event_accuracy)
+  }
+  return(event_accuracy)
+}
+
+
+
+
+
+
 my_acf = function(x, lag.min = 1, lag.max = 10){cc = acf(x, lag.max = lag.max, plot = FALSE); return(max(cc$acf[lag.min:lag.max]))}
 
 # x1 = c(rep(c(rep(1, 5), rep(0, 23)), 10), rep(0, 100))
@@ -38,7 +97,7 @@ create_observation_scores = function(d, features = c("bleeding")){
     #cens$bleeding = 1
     
     # We also convert a "first day" into bleeding
-    j = which(obs$first_day)
+    j = which(obs$first_day & (obs$bleeding_score == 0))
     obs$bleeding_score[j] = pmax(obs$bleeding_score[j],rep(1/2.5, length(j)))
     
     obs$bleeding_density_5d_score = frollmean(obs$bleeding_score, n = 5, align = "center")
@@ -72,8 +131,10 @@ create_observation_scores = function(d, features = c("bleeding")){
     
     # detect odd values (e.g. way too low, way too high, or oddly repeated values)
     if(sum(!is.na(obs$temp))>1){ # if there is at least one temperature
+      # looking for oddly repeated values
       ttemp = table(obs$temp) # histogram of temperatures
       if((length(unique(obs$temp))==1)|(max(ttemp)> 5*(sort(ttemp,decreasing = TRUE)[2]))){weird_temp = as.numeric(names(ttemp)[which.max(ttemp)])}else{weird_temp = -9999}
+      # and removing too high or too low
       odd =  which((obs$temp < 95) | (obs$temp > 101) | (obs$temp == weird_temp))
       if(length(odd)>0){obs$temp[odd] = NA}
     }
@@ -82,7 +143,7 @@ create_observation_scores = function(d, features = c("bleeding")){
     median_temp = median(obs$temp, na.rm = TRUE)
     obs$temp_score = obs$temp-median_temp
     # removing extreme values
-    obs$temp_score = pmin(2,pmax(-2,obs$temp_score))
+    obs$temp_score = pmin(1.5,pmax(-1.5,obs$temp_score))
     # removing temperatures when bleeding >= heavy
     obs$temp_score[obs$bleeding == 3] = NA
   }
@@ -100,20 +161,52 @@ create_observation_scores = function(d, features = c("bleeding")){
   
   # Pregnancy hints
   if(all(c("preg_hint","bleeding","preg","temp") %in% features)){
+    # duration of pregnancy hint after a pregnancy hint triggering event
     ns = 50*7
-    # Any long stretches of high temperature?
-    temp_score_mod = obs$temp_score; temp_score_mod[obs$bleeding_score>0] = NA
-    tmp = (frollapply(temp_score_mod, n = 45, FUN = function(x){sum(x>0.2, na.rm = TRUE)}) >= 30) %>% replace_na(.,0)
-    j = which(tmp & c(0, diff(tmp)));
-    if(any(diff(j)<20)){j = j[-(which(diff(j)<20)+1)]}
-    obs$preg_from_temp = 0*tmp; if(length(j)>0){k = rep(j,each = ns) + (1:ns); k = k[k %in% 1:nrow(obs)]; obs$preg_from_temp[k] = 1}
-    # Any pregnancy tests ?
-    j = which(obs$preg_score==1)
-    obs$preg_from_preg_test = 0*tmp; if(length(j)>0){k = rep(j,each = ns) + (1:ns); k = k[k %in% 1:nrow(obs)]; obs$preg_from_preg_test[k] = 1}
-    # combined with low bleeding density over 90 days
-    obs$preg_hint_score = pmax(obs$preg_from_temp, obs$preg_from_preg_test ) * (obs$acf_score < 0.2) * (obs$bleeding_score == 0)
     
+    # pregnancy hint triggering events: either a long stretch of high temperatures OR a positive pregnancy test
+     # Any long stretches of high temperature?
+    temp_score_mod = obs$temp_score; temp_score_mod[obs$bleeding_score>0] = NA # we remove temperature measurements when bleeding is logged
+    tmp = (frollapply(temp_score_mod, n = 35, FUN = function(x){x2 = x; x2 = x2[!is.na(x)];sum(x2>0.2, na.rm = TRUE)}, align = "left") >= 20) & # a long stretch of high temperature is at least 20/35 days of relative temperature above 0.2
+      (frollapply(temp_score_mod, n = 15, FUN = function(x){median(x, na.rm = TRUE)}, align = "left") >= 0.2) # and a median temperature over 0.2 for 15 days
+    tmp = tmp %>% replace_na(.,0)
+    j_temp = which(tmp & c(0, diff(tmp))); j_temp = j_temp+14
+    if(any(diff(j_temp)<20)){j_temp = j_temp[-(which(diff(j_temp)<20)+1)]}
+    obs$preg_from_temp = 0*tmp; if(length(j_temp)>0){k = rep(j_temp,each = ns) + (1:ns); k = k[k %in% 1:nrow(obs)]; obs$preg_from_temp[k] = 1}
+     # Any pregnancy tests ?
+    j_pregt = which(obs$preg_score==1)
+    obs$preg_from_preg_test = 0*tmp; if(length(j_pregt)>0){k = rep(j_pregt,each = ns) + (1:ns); k = k[k %in% 1:nrow(obs)]; obs$preg_from_preg_test[k] = 1}
+    if(any(diff(j_pregt)<20)){j_pregt = j_pregt[-(which(diff(j_pregt)<20)+1)]}
+     # combining triggering events
+    j = sort(c(j_temp, j_pregt))
+    if(any(diff(j)<20)){j = j[-(which(diff(j)<20)+1)]}
+    
+    obs$preg_hint_score = 0
+    for(jj in j){
+      ix = jj:min((jj+ns-1),nrow(obs))
+      rx = 1:length(ix)
+      preg_hint = 1+0*rx
+      # the pregnancy hint variable is modulated by different factors
+      # 1. the bleeding patterns autocorrelation: 
+      #    if the autocorrelation is high, the user is unlikely to be pregnant; except at the beginning of the pregnancy
+      acf = obs$acf_score[ix] * sigmoid(rx,x0 = 30,slope = 0.3)
+      acf[is.na(acf)] = 0
+      preg_hint = 1-pmax(0,acf)
+      # 2. any bleeding turns this score off
+      preg_hint = preg_hint * (obs$bleeding_score[ix] == 0)
+      
+      # 3. adverse events such as period-like events or negative pregnancy tests decrease the intensity of the pregnancy hint score
+      neg_preg_test = (obs$preg_score[ix] == -1)*1
+      period_like_bleeding = (obs$bleeding_density_5d_score[ix]>0.5)*1
+      period_like_bleeding = ((period_like_bleeding == 1) & c(TRUE, diff(period_like_bleeding) == 1) )* 1
+      adverse_events = cumsum(pmax(0,neg_preg_test, period_like_bleeding, na.rm = TRUE))
+      preg_hint = preg_hint / (2^adverse_events)
+      
+      # the pregnancy hint is triggers by any of the events:
+      obs$preg_hint_score[ix] = pmax(obs$preg_hint_score[ix], preg_hint) 
+    }
   }
+  obs$preg_hint_score = round(obs$preg_hint_score/0.2)*0.2
   
   
   # tracking density
@@ -249,4 +342,5 @@ bluid_hsmm = function(hsmm, M){
   
   return(this_user_hsmm)
 }
+
 

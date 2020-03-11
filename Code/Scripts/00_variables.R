@@ -7,7 +7,8 @@ par$reset_steps = c("","","")
 
 source("Scripts/00_variables_IO.R")
 
-
+viz = list()
+viz$full_width = 12
 
 
 

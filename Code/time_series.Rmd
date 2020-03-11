@@ -1,0 +1,190 @@
+---
+title: "time_series"
+author: "Laura Symul"
+date: "3/11/2020"
+output: html_document
+---
+
+
+
+#### Time-series
+
+```{r idecod decoding and fitting visualization, echo = FALSE, fig.height=9, fig.width=12, warning=FALSE}
+
+users = unique(days$user_id)
+
+for(user in users[1:10]){
+  
+  cat(user, "\n")
+  d = days %>% dplyr::filter(user_id == user)
+  
+  try({
+    p = plot_user_history(d = d, show_all_variables = FALSE)
+    print(p)
+  })
+  
+  
+  o = obs %>% dplyr::filter(user_id == user) %>% select(c("user_id","rel_date",str_c(hsmm$obs_names,"_score")))
+  viterbi_fitted =  viterbi_states_fitted  %>% dplyr::filter(user_id == user)
+  # summary of confidence cycle by cycle
+  k = which((viterbi_fitted$state_num == 1) & (dplyr::lag(viterbi_fitted$state_num) != 1))
+  if(length(k)>0){kr = rep(0:length(k), c(k[1],diff(c(k,nrow(viterbi_fitted)))))}else{kr = rep(0, nrow(viterbi_fitted))}
+  viterbi_fitted$cs_cycle_min = ave(viterbi_fitted$cs, by = kr, FUN = min)
+  viterbi_fitted$cs_cycle_mean = ave(viterbi_fitted$cs, by = kr, FUN = mean)
+  
+  states_labels_list = list(
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user),
+    
+    viterbi_init =  viterbi_states_init  %>% dplyr::filter(user_id == user),  
+    smoothed_init = smoothed_states_init  %>% dplyr::filter(user_id == user), 
+    smoothed_probs_init = state_prob_long_init %>% dplyr::filter(user_id == user),
+    
+    viterbi_fitted =  viterbi_fitted, 
+    smoothed_fitted = smoothed_states_fitted  %>% dplyr::filter(user_id == user), 
+    smoothed_probs_fitted = state_prob_long_fitted %>% dplyr::filter(user_id == user)
+  )
+  
+  try({
+    p = plot_user_history(obs = o, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+}
+
+
+```
+
+
+
+#### Time-series; Summary
+
+
+```{r idecod decoding and fitting visualization short, echo = FALSE, fig.height=5, fig.width=15, warnings = FALSE}
+
+users = unique(days$user_id)
+
+for(user in users[1:10]){
+  
+  cat(user, "\n")
+  d = days %>% dplyr::filter(user_id == user)
+  
+  o = obs %>% dplyr::filter(user_id == user) %>% select(c("user_id","rel_date",str_c(hsmm$obs_names,"_score")))
+  viterbi_fitted =  viterbi_states_fitted  %>% dplyr::filter(user_id == user) %>% 
+    mutate(diff = (state_abbr == manually_labelled_states))
+  
+  states_labels_list = list(
+    viterbi_fitted =  viterbi_fitted %>% dplyr::select(user_id, rel_date, color, cs) %>%  
+      mutate(name = "States\n(Viterbi fitted)"), 
+    difference_with_ground_truth = viterbi_fitted %>% 
+      mutate(color = c("red","steelblue2")[diff+1], name = "Diff w/\nground truth") %>% 
+      dplyr::select(user_id, rel_date, color, alpha = cs),
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user)%>%  
+      mutate(name = "States\n(manual labels)")
+  )
+  
+  try({
+    p = plot_user_history(d = d, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+  
+  
+}
+
+
+```
+
+##### Smoothed init
+
+```{r idecod decoding and fitting visualization short smoothed init, echo = FALSE, fig.height=10, fig.width=15, warnings = FALSE}
+
+
+smoothed_states_init = read_feather(path = str_c(IO$output_data,"decoding/smoothed_states_init.feather"))
+users = unique(manual_labels$user_id)
+
+for(user in users){
+  
+  
+  cat(user, "\n")
+  d = days %>% dplyr::filter(user_id == user)
+  
+  o = obs %>% dplyr::filter(user_id == user) %>% select(c("user_id","rel_date",str_c(hsmm$obs_names,"_score")))
+  
+  smoothed_init =  smoothed_states_init  %>% dplyr::filter(user_id == user) %>% 
+    mutate(state_abbr = hsmm$states$abbr[state_num],
+           diff = (state_abbr == manually_labelled_states))
+  
+  states_labels_list = list(
+    smoothed_init =  smoothed_init %>% dplyr::select(user_id, rel_date, color, cs) %>%  
+      mutate(name = "States\n(Backward-Forward - Init)"), 
+    difference_with_ground_truth = smoothed_init %>% 
+      mutate(color = c("red","steelblue2")[diff+1], name = "Diff w/\nground truth") %>% 
+      dplyr::select(user_id, rel_date, color, alpha = cs),
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user)%>%  
+      mutate(name = "States\n(manual labels)")
+  )
+  
+  try({
+    p = plot_user_history(d = d, obs = o, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+  
+  
+}
+
+
+```
+
+
+
+#### Time-series; Zoom
+
+
+```{r idecod decoding and fitting visualization ZOOM, echo = FALSE, fig.height=4, fig.width=10, warnings = FALSE}
+
+source("Scripts/00_functions_viz.R")
+
+users_list = data.frame(user_id = "3ec8d9a84ecb1efd9640201e69e458d148b8b118", start = 900, end = 1500) 
+users_list = rbind(users_list, 
+                   data.frame(user_id = "db0bfa84dcff70b46e928c9b9d4569a4fbf91416", start = 400, end = 550))
+users_list = rbind(users_list, 
+                   data.frame(user_id = "4517215d2a1f256e6077db5e4ecb359804b9c99e", start = 2150, end = 2286))
+
+for(user_i in 1:nrow(users_list)){
+  
+  user = users_list$user_id[user_i]
+  start = users_list$start[user_i]
+  end = users_list$end[user_i]
+  cat(user, "\n")
+  d = days %>% dplyr::filter(user_id == user, rel_date %in% start:end)
+  
+  o = obs %>% dplyr::filter(user_id == user, rel_date %in% start:end) %>%
+    select(c("user_id","rel_date",str_c(hsmm$obs_names,"_score")))
+  viterbi_fitted =  viterbi_states_fitted  %>% dplyr::filter(user_id == user, rel_date %in% start:end) %>% 
+    mutate(diff = (state_abbr == manually_labelled_states))
+  
+  states_labels_list = list(
+    smoothed_probs_fitted = state_prob_long_fitted %>% dplyr::filter(user_id == user, rel_date %in% start:end),
+    #viterbi_fitted =  viterbi_fitted %>% dplyr::select(user_id, rel_date, color, cs) %>%  
+    #  mutate(name = "States\n(Viterbi fitted)"), 
+    #difference_with_ground_truth = viterbi_fitted %>% 
+    #  mutate(color = c("red","steelblue2")[diff+1], name = "Diff w/\nground truth") %>% 
+    #  dplyr::select(user_id, rel_date, color, alpha = cs),
+    manual_labels = manual_labels %>% dplyr::filter(user_id == user, rel_date %in% start:end)%>%  
+      mutate(name = "States\n(manual labels)")
+  )
+  
+  try({
+    p = plot_user_history(d = d, states_labels_list = states_labels_list)
+    print(p)
+  })
+  
+}
+
+
+```
+
+
+
+

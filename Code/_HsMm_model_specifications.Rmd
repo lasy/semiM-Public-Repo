@@ -49,6 +49,10 @@ hsmm$states = data.frame(
              "darkseagreen1","darkseagreen3", # PP + BF
              "gray"), # ,"red"
   group = c("M",rep("Ovulatory",6), "P",rep("Loss",2),rep("Pregnancy",4),rep("Post-Delivery",2), "Anovulatory"),
+  group_sojourn_time_scale = c("Ovulatory","Ovulatory","Ovulatory","-","-","-","Ovulatory",
+                               "-","Pregnancy","Birth or loss",
+                               "-","-","Pregnancy","Birth or loss",
+                               "Anovulatory","Anovulatory","Anovulatory"),
   stringsAsFactors = FALSE
 )
 hsmm$states$number = 1:nrow(hsmm$states)
@@ -71,9 +75,9 @@ hsmm$states$l = matrix(c(0,0, #M
                          -1, 1.3, #PP
                          -1.5, 1.8, #BF
                          1,0.5 #Ano
-                         ),
-                       byrow = TRUE,
-                       ncol = 2
+),
+byrow = TRUE,
+ncol = 2
 )
 hsmm$n_states = nrow(hsmm$states)
 
@@ -156,6 +160,23 @@ plot(g,# edge.arrow.size=0.75,
      layout = hsmm$states$l
 )
 
+pdf(file = str_c(IO$panels,"model_graph.pdf"), width = viz$full_width/3, height = viz$full_width/3)
+par(mar = c(0,0,0,0))
+plot(g,# edge.arrow.size=0.75, 
+     vertex.size=60, vertex.frame.color="white", 
+     vertex.label.color="white", vertex.label.family  = "sans", 
+     vertex.label.font = 2, vertex.label.cex = 1.2,
+     vertex.color = hsmm$states$colors[match(V(g)$name,  hsmm$states$abbr)],
+     layout = hsmm$states$l,
+     xlim = range(hsmm$states$l[,1])+c(-1,1)*0.2,
+     ylim = range(hsmm$states$l[,2])+c(-1,1)*0.2,
+     margin = 1,
+     rescale = FALSE
+)
+dev.off()
+
+
+
 ```
 
 ```{r transition viz anim, fig.height=6, fig.width=6}
@@ -167,17 +188,17 @@ for(i in 1:length(is)){
   g = graph_from_adjacency_matrix(hsmm$trans[ii,ii], weighted = TRUE, mode = "directed")
   E(g)$width <- 1+E(g)$weight*5
   igraph::plot.igraph(g,# edge.arrow.size=0.75, 
-       vertex.size=50, vertex.frame.color="white", 
-       vertex.label.color="white", vertex.label.family  = "sans",
-       label.label.size = 2,
-       vertex.color = hsmm$states$colors[match(V(g)$name,  hsmm$states$abbr)],
-       layout = hsmm$states$l[ii,],
-       rescale = FALSE,
-       xlim = range(hsmm$states$l[,1]),
-       ylim = range(hsmm$states$l[,2]),
-       margin = 0.5,
-       frame = FALSE
-       #asp = 1
+                      vertex.size=50, vertex.frame.color="white", 
+                      vertex.label.color="white", vertex.label.family  = "sans",
+                      label.label.size = 2,
+                      vertex.color = hsmm$states$colors[match(V(g)$name,  hsmm$states$abbr)],
+                      layout = hsmm$states$l[ii,],
+                      rescale = FALSE,
+                      xlim = range(hsmm$states$l[,1]),
+                      ylim = range(hsmm$states$l[,2]),
+                      margin = 0.5,
+                      frame = FALSE
+                      #asp = 1
   )
 }
 
@@ -221,6 +242,8 @@ hsmm$sojourn[hsmm$states$abbr == "M",] =
 # lE
 lE_gammafit = gammafit(x = FAM_agg_sojourn$n_days[FAM_agg_sojourn$hsmm_states == "lE"])
 hsmm$sojourn[hsmm$states$abbr == "lE",] = dgamma(x, shape = lE_gammafit$shape, scale = lE_gammafit$scale)
+hsmm$sojourn[hsmm$states$abbr == "lE",30:Nd] = 0
+hsmm$sojourn[hsmm$states$abbr == "lE",] = hsmm$sojourn[hsmm$states$abbr == "lE",]/sum(hsmm$sojourn[hsmm$states$abbr == "lE",])
 
 # hE
 hE_gammafit = gammafit(x = pmax(1,FAM_agg_sojourn$n_days[FAM_agg_sojourn$hsmm_states == "hE"]-1))
@@ -228,41 +251,46 @@ hsmm$sojourn[hsmm$states$abbr == "hE",] = dgamma(x, shape = hE_gammafit$shape, s
 
 # preO
 hsmm$sojourn[hsmm$states$abbr == "preO",] = oneday
-  
+
 # O
 hsmm$sojourn[hsmm$states$abbr == "O",] =  oneday
 
 # postO
 hsmm$sojourn[hsmm$states$abbr == "postO",] = twodays
-  
+
 # Lut
 xlut = FAM_agg_sojourn$n_days[FAM_agg_sojourn$hsmm_states == "Lut"]
 xlut[(xlut<7)|(xlut>17)] = NA 
 lut_gammafit = gammafit(x = xlut[!is.na(xlut)])
 hsmm$sojourn[hsmm$states$abbr == "Lut",] = dgamma(x, shape = lut_gammafit$shape, scale = lut_gammafit$scale)
+hsmm$sojourn[hsmm$states$abbr == "Lut",18:Nd] = 0
+hsmm$sojourn[hsmm$states$abbr == "Lut",] = hsmm$sojourn[hsmm$states$abbr == "Lut",]/sum(hsmm$sojourn[hsmm$states$abbr == "Lut",])
 #hist(xlut, breaks = seq(-0.5,max(xlut, na.rm = TRUE)+0.5, by = 1), xlim = c(0,30), freq = FALSE)
 #points(dgamma(x, shape = lut_gammafit$shape, scale = lut_gammafit$scale), type = "l", xlim = c(0,30))
-  
+
 # P
 hsmm$sojourn[hsmm$states$abbr == "P",] = oneday
-  
+
 # PL
 hsmm$sojourn[hsmm$states$abbr == "PL",] = dgamma(x, shape = 1.5, scale = 30)  # dgamma(x, shape = 1.5, scale = 30) 
 hsmm$sojourn[hsmm$states$abbr == "PL",183:length(x)] = 0
 # L
 hsmm$sojourn[hsmm$states$abbr == "L",] = hsmm$sojourn[hsmm$states$abbr == "M",]
-  
+
 # PBs
 hsmm$sojourn[hsmm$states$abbr == "PB1",] = c(rep(0,12*7-1),1,rep(0, Nd-12*7)) # exactly 12 weeks (1st trimester)
 hsmm$sojourn[hsmm$states$abbr == "PB2",] = c(rep(0,12*7-1),1,rep(0, Nd-12*7)) # exactly 12 weeks (2nd trimester)
 hsmm$sojourn[hsmm$states$abbr == "PB3",] = dnorm(x, mean = 12*7, sd = 8) # approximately 12 weeks 
 hsmm$sojourn[hsmm$states$abbr == "PB3",c(1:56,112:length(x))] = 0
-  
+
 # B
 hsmm$sojourn[hsmm$states$abbr == "B",] = uptoNdays(N = 31, Nd = Nd)
-  
+
 # PP
 hsmm$sojourn[hsmm$states$abbr == "PP",] = dnorm(x, mean = 7*7, sd = 10)
+hsmm$sojourn[hsmm$states$abbr == "PP",1:18] = 0
+hsmm$sojourn[hsmm$states$abbr == "PP",] = 
+  hsmm$sojourn[hsmm$states$abbr == "PP",]/sum(hsmm$sojourn[hsmm$states$abbr == "PP",])
 
 # BF
 hsmm$sojourn[hsmm$states$abbr == "BF",] =  dgamma(x, shape = 1.8, scale = 150) 
@@ -288,10 +316,27 @@ colnames(sojourn) = hsmm$states$abbr
 sojourn$day = 1:nrow(sojourn)
 sojourn_long = melt(sojourn, id.vars = "day")
 colnames(sojourn_long) = c("day","State","d")
-sojourn_long$color = hsmm$states$colors[match(sojourn_long$State, hsmm$states$abbr)]
-j = which(sojourn_long$d > 0.0001)
-ggplot(sojourn_long[j,])+
-  geom_area(aes(x = day, y = d, fill = color, col = color))+
+
+sojourn_long = sojourn_long %>% mutate(
+  color = hsmm$states$colors[match(State, hsmm$states$abbr)],
+  group = hsmm$states$group_sojourn_time_scale[match(State,hsmm$states$abbr)]  %>% str_c(.," states") %>% 
+    factor(.,levels = unique(hsmm$states$group_sojourn_time_scale) %>% str_c(.," states")) 
+) %>% arrange(group, State) %>% mutate(color = factor(color, levels = unique(color)))
+
+g = ggplot(sojourn_long %>%  dplyr::filter(d > 1/2000, !(group == "- states")),aes(x = day, y = d, fill = color, col = color))
+g = g + geom_area(position = "identity", alpha = 0.5)+
+  scale_color_identity()+scale_fill_identity()+ #"States",guide = "legend", labels = unique(g$data$State)
+  #guides(fill = guide_legend(override.aes = list(alpha = 1), nrow = 1))+
+  expand_limits(x = 0)+
+  ylab("pdf")+xlab("days")+
+  scale_x_continuous(breaks = function(x){x = round(x); if(x[2]< 63){by = 7};if(x[2] %in% 63:200){by = 30};if(x[2]> 200){by = 90};return(seq(0,x[2],by = by))})+
+  facet_wrap(group~., scale = "free", nrow = 4, dir = "h", strip.position = "top") #+ theme(legend.position = "bottom", legend.key.size = unit(0.3,"line"), legend.direction = "vertical",legend.box.margin = margin(t = -20))
+g
+
+ggsave(g, filename = str_c(IO$panels,"sojourn_distributions.pdf"),width = viz$full_width/4, height = viz$full_width/1.8, scale = 0.85)
+
+g = ggplot(sojourn_long %>%  dplyr::filter(d > 1/10000), aes(x = day, y = d, fill = color, col = color))
+g + geom_area()+
   scale_color_identity()+scale_fill_identity()+
   expand_limits(x = 0)+
   facet_wrap(State~., scale = "free", nrow = 5, dir = "v")

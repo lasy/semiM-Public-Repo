@@ -405,3 +405,57 @@ write_feather(users, path = paste0(IO$output_data, "users.feather"))
 
 
 
+```{r fdk finding users with at least 150 days of observation in windows of 180 days}
+
+
+input_folder = paste0(IO$tmp_data, "Days_formatted/")
+
+files = list.files(input_folder)
+
+tic()
+cl = makeCluster(par$n_cores, outfile="")
+registerDoParallel(cl)
+
+users_agg = foreach(file = files, .combine = rbind, .packages = c("feather","readr","plyr","dplyr")) %dopar%{
+  
+  days = read_feather(path=paste0(input_folder, file))
+  o = order(days$user_id, days$date)
+  days = days[o,]
+  
+  W = 180
+  M = 150
+  
+  users_agg  = ddply(days,
+                     .(user_id),
+                     summarize,
+                     max_n_obs_in_180d = max(sapply(1:length(rel_date), 
+                                                  function(i) sum(
+                                                    (rel_date >= rel_date[i]) & 
+                                                      (rel_date <= (rel_date[i]+W-1)))
+                                           ))
+  ) 
+  users_agg$tracking_150d_in_180d  = (users_agg$max_n_obs_in_180d >= M)
+  return(users_agg)
+}
+
+stopImplicitCluster()
+toc()
+
+users_agg[is.na(users_agg)] = 0
+
+dim(users_agg)
+dim(users)
+
+cols_to_add = colnames(users_agg[,-1])
+m = match(users_agg$user_id, users$user_id)
+users$user_id = as.character(users$user_id)
+head(users$user_id)
+head(users_agg$user_id[m])
+for(col_to_add in cols_to_add){
+  eval(parse(text = paste0("users$",col_to_add," = users_agg$",col_to_add,"[m]")))
+}
+
+write_feather(users, path = paste0(IO$output_data, "users.feather"))
+
+```
+

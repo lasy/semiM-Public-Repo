@@ -19,30 +19,29 @@ output:
 
 - Data pre-processing:
 
-    + re-run so that rel_date exists for all users (and check where the duplicates come from?!)
+    + [DONE] re-run so that rel_date exists for all users 
 
 - Manual labelling:
 
-    + option to delete labels (and delete pregnancy in af3d...)
+    + [DONE] option to delete labels (and delete pregnancy in af3d...)
     
-    + check that the labels do not overlap (overwrite)
+    + [DONE] check that the labels do not overlap (overwrite)
     
     + label __more__ time-series
     
     
 - Model specification:
 
-    + --MODIFY the model: Make the transition to Anovulatory cycle direct from Menses-- [done] (and maybe? remove the state "Loss" as PL can directly transition to Menses)
+    + [DONE] MODIFY the model: Make the transition to Anovulatory cycle direct from Menses-- [done] (and maybe? remove the state "Loss" as PL can directly transition to Menses)
     
-    + add an observation that counts the number of bleeding days in the next 9 months
 
 - Decoding:
 
-    + After decoding, check the probability of the observations given the decoded state in order to provide a confidence score for each time-point (or state)
+    + [DONE] After decoding, check the probability of the observations given the decoded state in order to provide a confidence score for each time-point (or state)
     
-    + Modify the code so that the end-user provides a matrix of observations with NAs instead of having to provide an observation matrix WITH a censoring matrix
+    + [DONE] Modify the code so that the end-user provides a matrix of observations with NAs instead of having to provide an observation matrix WITH a censoring matrix
     
-    + Keep a static viz of the decoded time-series in the Rmd (large width)
+    + [DONE]Keep a static viz of the decoded time-series in the Rmd (large width)
     
     + UNDERSTAND WHY VITERBI is so BAD?!
 
@@ -50,11 +49,11 @@ output:
 
 - Observation transformation for the semi-Markov
 
-    + -- set the mucus to NA when bleeding >= light --
+    + [DONE] -- set the mucus to NA when bleeding >= light --
     
-    + -- remove temperature outliers --
+    + [DONE] -- remove temperature outliers --
     
-    + set the temperature to NA when bleeding == heavy
+    + [DONE] set the temperature to NA when bleeding == heavy
     
     + ?? normalize the mucus on a per user basis
     

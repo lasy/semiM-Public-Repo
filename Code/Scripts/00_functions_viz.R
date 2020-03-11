@@ -235,6 +235,59 @@ plot_user_history= function(d = data.frame(),
 
 
 
+
+
+ggplot_confusion_matrix = function(true , decoded){
+  
+  cm = table(true = true, decoded =  decoded)
+  cm
+  mx = match(hsmm$states$abbr,colnames(cm)); #if(any(is.na(mx))){mx[is.na(mx)]= (max(mx,na.rm = TRUE)+1) : (length(mx))}
+  my = match(hsmm$states$abbr,rownames(cm))
+  cm = cm[my, mx]
+  
+  cm_sum = rowSums(cm, na.rm = TRUE)
+  (cm/cm_sum*100) %>%  round(.,1) 
+  cm = cm/cm_sum *100
+  
+  cm_long = data.frame(cm)
+  cm_long$true = factor(cm_long$true, levels = rev(hsmm$states$abbr))
+  
+  confusion_matrix_viz = ggplot(cm_long, aes(x = decoded, y = true , fill = Freq))+ coord_fixed()+
+    geom_tile()+
+    geom_abline(slope = -1, intercept = hsmm$n_states+1, col = "black", size = 0.2, linetype = 2)+
+    geom_hline(yintercept = 0:hsmm$n_states+0.5, col = "black", size = 0.1)+
+    geom_vline(xintercept = c(0.5,hsmm$n_states+0.5), col = "black", size = 0.1)+
+    scale_fill_gradient(name = "% of manual labels",low = "white", high = "royalblue3")+
+    ylab("Manual\nlabels")+
+    xlab("Decoded labels")+
+    theme(legend.position = "bottom",
+          legend.title = element_text(vjust = 0.75),
+          axis.title.y = element_text(angle = 0, hjust = 1, vjust = 1),
+          axis.title.x = element_text(hjust = 1),
+          axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  
+  return(confusion_matrix_viz)
+}
+
+
+
+ggplot_event_accuracy = function(event_accuracy){
+  event_accuracy$no_event_in_30d_window = is.na(event_accuracy$decoded_rel_date)
+  
+  g = ggplot(event_accuracy, aes(x = time_diff, fill = no_event_in_30d_window)) +
+    geom_histogram(binwidth = 1)+
+    geom_vline(xintercept = 0, linetype = 2)+
+    facet_grid(event ~ ., scale = "free")+
+    scale_fill_manual(values = c("turquoise","red"))+
+    xlab("difference in days (decoded - manual label)")+
+    xlim(c(-17.5,15.5))+
+    guides(fill = FALSE)
+  return(g)
+}
+
+
+
+
 viz_em_parm = function(p1, p2, hsmm){
   
   

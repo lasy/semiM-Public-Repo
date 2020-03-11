@@ -40,11 +40,30 @@ Here, we modify the existing `mhsmm` package to allow for missingness patterns t
 
 [Expand]
 
-Main 2 modifications:
+Main modifications:
 
-- Censoring matrix
+- Allowing for any pattern of data missingness
 
-- Re-computing the emission parameters only for observed states.
+- Confidence score
+
+- Allowing for multi-variate time-series in which each variable may be described by different distribution families.
+
+- (Re-computing the emission parameters only for observed states).
+
+
+## Methods
+
+We use a sub-set (114 users) of all users' time series to test and improve different decoding methods and compare them.
+
+Currently implemented methods:
+
+- baseline: rule-based decoding (if-else statements)
+
+- semi-Markov: decoding with initial model parameters
+
+- semi-Markov: decoding with fitted model parameters
+
+- (to come) decoding using a deep-learning approach
 
 
 

@@ -625,7 +625,7 @@ acf_mean
 acf_sd 
 ```
 
-#### Pregnancy "Hints""
+#### Pregnancy "Hints" - Binomial
 
 ```{r hsmm_em preg hint, echo = FALSE}
 
@@ -673,6 +673,59 @@ preg_hint_prob = c(preg_hint_prob, 0.1)
 ```{r}
 preg_hint_prob 
 ```
+#### Pregnancy "Hints" - non-parametric distribution
+
+```{r hsmm_em preg hint beta, echo = FALSE}
+
+preg_hint_type = "non-par"
+preg_hint_values = seq(0,1,by = 0.1)
+nn = length(preg_hint_values)
+low_values = (nn:1)/sum(nn:1)
+high_values = rev(low_values)
+
+# menses
+preg_hint_probs = low_values
+# lE
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+# hE
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+# preO
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+# O
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+# postO
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+# lut
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+# P
+preg_hint_probs = cbind(preg_hint_probs,high_values)
+# PL
+preg_hint_probs = cbind(preg_hint_probs,high_values)
+# L
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+# PB1
+preg_hint_probs = cbind(preg_hint_probs,high_values)
+# PB2
+preg_hint_probs = cbind(preg_hint_probs,high_values)
+# PB3
+preg_hint_probs = cbind(preg_hint_probs,high_values)
+# B
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+# PP
+preg_hint_probs = cbind(preg_hint_probs,high_values)
+# BF
+preg_hint_probs = cbind(preg_hint_probs,high_values)
+# ano
+preg_hint_probs = cbind(preg_hint_probs,low_values)
+
+```
+
+
+```{r}
+preg_hint_probs
+```
+
+
 
 #### Observation density 5 days
 
@@ -746,7 +799,7 @@ obs_dens_sd
 ```
 
 
-```{r hsmm_em obs_dens, echo=FALSE}
+```{r hsmm_em obs_dens non par, echo=FALSE}
 
 obs_dens_type = "non-par"
 
@@ -965,6 +1018,36 @@ g_par_mix = ggplot(r_obs_mix, aes(x = state_name, y = value, fill = color, col =
   facet_grid( obs_name ~ ., scale = "free")
 
 g_par_mix
+
+
+
+g_par_mix = ggplot(r_obs_mix, aes(x = value, fill = color))+ coord_flip()
+g_par_mix = g_par_mix + 
+  geom_histogram(binwidth  = 0.05, col = NA)+
+  scale_color_identity()+scale_fill_identity()+
+  facet_grid( obs_name ~ state_name, scales = "free")
+
+g_par_mix
+
+precision = 1/5
+obs_mix_freq = r_obs_mix %>% mutate(rounded_value = round(value/precision)*precision) %>% 
+  group_by(state_name, color, obs_name, rounded_value) %>% 
+  dplyr::summarise(n = n()) %>% group_by(obs_name) %>%  mutate(max_n = max(n), f = n/max_n)
+
+g_par_mix = ggplot(obs_mix_freq, aes(xmin = 0, xmax = f, ymin = rounded_value-precision/2, ymax = rounded_value+precision/2, fill = color))
+g_par_mix = g_par_mix + 
+  geom_rect()+
+  scale_color_identity()+scale_fill_identity()+
+  facet_grid( obs_name ~ state_name, scales = "free")+
+  xlab("pdf (scaled by its max. value per variable for clarity of the plot)")+
+  ylab("")+
+  scale_y_continuous(breaks = seq(-5,5,by = 1), limits = function(x){x[1] = min(x[1],-0.75); x[2] = max(x[2],1.75); return(x)})+
+  scale_x_continuous(breaks = 0)+
+  theme(strip.text.x = element_text(angle = 90, hjust = 0)) #,strip.text.y = element_text(angle = 0, hjust = 0)
+
+g_par_mix
+
+ggsave(g_par_mix, filename = str_c(IO$panels,"initial_emission_distributions.pdf"), width = viz$full_width/10*4.2, height = viz$full_width/1.8, scale = 0.9)
 
 
 hsmm$emission_par = parem
