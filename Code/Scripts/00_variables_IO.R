@@ -21,10 +21,10 @@ if(!dir.exists(IO$output_data)){dir.create(IO$output_data, recursive = TRUE)}
 
 # PUBLIC OUTPUT FIGURES AND DATA
 
-IO$panels = paste0("../Figures Tables Media/Figures/panels/",folder_name)
+IO$panels = paste0("../Figures_Tables_Media/Figures/panels/",folder_name)
 if(!dir.exists(IO$panels)){dir.create(IO$panels, recursive = TRUE)}
 
-IO$tables = paste0("../Figures Tables Media/Tables/",folder_name)
+IO$tables = paste0("../Figures_Tables_Media/Tables/",folder_name)
 if(!dir.exists(IO$tables)){dir.create(IO$tables, recursive = TRUE)}
 
 IO$public_output_data = paste0("../Data/",folder_name)

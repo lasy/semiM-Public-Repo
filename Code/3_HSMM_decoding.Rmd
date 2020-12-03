@@ -1,0 +1,150 @@
+---
+title: "Decoding time-series"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+
+```{r decoding-setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+source("Scripts/00_setup.R")
+```
+
+
+# Decoding time-series
+
+## Decoding functions
+
+```{r decoding-functions}
+source("Scripts/00_FAM_decoding_functions.R")
+```
+
+## Loading models
+
+
+```{r decoding-loading-models, results="hide"}
+
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+load("../Data/models/M_hsmm.Rdata", verbose = TRUE)
+load("../Data/models/T_hsmm.Rdata", verbose = TRUE)
+
+```
+
+
+
+## Synthetic data
+
+
+```{r decoding-synthetic-data}
+
+X = read_feather("../Data/synthetic_data/Xsim.feather")
+
+RES.file = "../Data/decodings/RES_synthetic_data.feather"
+
+if(!file.exists(RES.file)){
+  
+  RES = purrr::map_dfr(.x = unique(X$seq_id),
+                       .f = function(sid){
+                         # cat(sid, "\n")
+                         get_most_likely_sequence_with_prob(
+                           X = X %>% 
+                             filter(seq_id == sid) %>% 
+                             select(-alpha, -state, -tracking_category),
+                           verbose = FALSE
+                         )
+                       }
+  )
+  
+  write_feather(RES, path = RES.file)
+}
+
+```
+
+## App data
+
+
+```{r decoding-app-data}
+
+X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
+ML = read_feather(path = paste0(IO$output_data, "ML.feather"))
+X = X %>% filter(seq_id %in% unique(ML$seq_id))
+
+RES.file = paste0(IO$output_data, "RES_app_data.feather")
+
+if(!file.exists(RES.file)){
+  
+  tic()
+  RES = purrr::map_dfr(.x = unique(X$seq_id),
+                       .f = function(sid){
+                         cat(sid, "\n")
+                         get_most_likely_sequence_with_prob(
+                           X = X %>% filter(seq_id == sid), 
+                           fit_models = FALSE,
+                           verbose = FALSE)
+                       }
+  )
+  toc()
+  
+  write_feather(RES, path = RES.file)
+}
+
+```
+
+
+```{r echo = FALSE, eval = FALSE}
+
+
+Xi = X %>%  filter(seq_id == "e53b025d055be6a2931093247f9e0a9ec366bdfd")  # 48fc5b2456bdf01c4c3d000c2b41fe9f0bd2eaf0
+
+
+res = get_most_likely_sequence_with_prob(X = Xi, fit_models = FALSE, verbose = TRUE)
+
+res_with_fit =  get_most_likely_sequence_with_prob(X = Xi, fit_models = TRUE, verbose = TRUE)
+
+plot_hsmm_seq(X = Xi %>% left_join(., res %>% select(seq_id, t, state, prob) %>% rename(state_decoded = state, prob_state_decoded = prob), by = c("seq_id","t")),
+              model = R_hsmm)
+
+plot_hsmm_seq(X = Xi %>% left_join(., res_with_fit %>% select(seq_id, t, state, prob) %>% rename(state_decoded = state, prob_state_decoded = prob), by = c("seq_id","t")),
+              model = R_hsmm)
+
+
+vit = predict_states_hsmm(model = R_hsmm, X = Xi, method = "viterbi")
+
+vit_M = predict_states_hsmm(model = M_hsmm, X = Xi %>%  select(seq_id, t, bleeding), method = "viterbi")
+smoo_M = predict_states_hsmm(model = M_hsmm, X = Xi %>%  select(seq_id, t, bleeding), method = "smoothed")
+
+plot_hsmm_seq_expanded(X = Xi %>% left_join(., vit_M$state_seq %>% select(seq_id, t, state) %>% rename(state_decoded = state), by = c("seq_id","t")),
+              model = R_hsmm)
+
+
+plot_hsmm_seq_expanded(X = Xi %>% left_join(., smoo_M$state_seq %>% select(seq_id, t, state) %>% rename(state_decoded = state), by = c("seq_id","t")),
+              model = R_hsmm)
+
+res_M = vit_M$state_seq %>%  select(seq_id, t, state) %>% left_join(., smoo_M$state_probs %>% select(seq_id, t, state, posterior, local) %>% rename(prob = posterior, b = local), by = c("seq_id", "t", "state") ) %>% mutate(b = 2.5*b) %>% rename(state_vit_M = state, prob_state_vit_M = prob) 
+
+
+plot_hsmm_seq_expanded(X = Xi %>% left_join(., res_M, by = c("seq_id","t")),
+              model = R_hsmm)
+
+GT_from_M = vit_M$state_seq %>% select(seq_id, t, state) %>% filter(state %in% which(R_hsmm$state_names %in% c("M","B")))
+
+vit_GT = predict_states_hsmm(model = R_hsmm, X = Xi, method = "viterbi", ground_truth = GT_from_M, trust_in_ground_truth = 0.75)
+
+
+plot_hsmm_seq_expanded(X = Xi %>% left_join(., vit_GT$state_seq %>% select(seq_id, t, state) %>% rename(state_decoded = state), by = c("seq_id","t")),
+              model = R_hsmm)
+
+
+```
+
+
+

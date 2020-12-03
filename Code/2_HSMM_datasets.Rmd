@@ -1,0 +1,234 @@
+---
+title: "Datasets"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+
+```{r datasets-setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+source("Scripts/00_setup.R")
+```
+
+# Datasets
+
+
+## Synthetic data generation
+
+
+To generate synthetic data, we first define a number of users and some characteristics defining these fictive users such as their highest tracking frequency, controlled with a parameter $\alpha$, and menstrual characteristics such as the length and regularity of their follicular and luteal phases or the noise in their temperature measurements.
+
+Because we want to evaluate the performance of our framework given different level of missing data in a realistic context, we define the effect of the parameter $\alpha$ on the missing probabilities as follow:
+
+
+$$ q^*_{j,k} = q_{j,k} - \beta \ q_{j,k} + \beta \ \delta  $$
+
+where
+
+$q_{j,k}$ are realistic (expected in real-life data, see fig \@ref(fig:datasets-expected-missingness)) estimates of the missing probabilities with $q_{j,k} = P(X_k \text{ is missing}|S = j)$, $\beta = \| \frac{3^{\alpha} - 1}{3^{\alpha}+1} \|$ and $\delta = 0$ if $\alpha < 0$ and 1 otherwise.
+
+The parameter $\alpha$ takes values in $\mathbb{R}$. When $\alpha$ is zero, the missing probabilities are identical to the expected missing probabilities from a typical app users whose purpose is to identify their fertile window. When $\alpha$ is negative, the missing probabilities are smaller than the expected ones, when alpha is positive they are bigger. In the extreme cases, a value of $-\infty$ means that the variables are never missing and a value of $+\infty$ means that the variables are always missing. When $\alpha = -1$, $q^* = \frac{1}{2} q$: the variables are missing only about half the time they were expected to be missing. When $\alpha = 1$, variables are missing with a probability of at least 50%.
+
+
+__Expected missingness__
+
+```{r datasets-expected-missingness, echo = FALSE, results='hide', fig.height=3, fig.cap="Missing probabilities for each variable and state expected for a typical users whose tracking purpose is to identify their fertile window and detect pregnancies early on."}
+
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+
+pj_mat = matrix(R_hsmm$censoring_probs$p, 
+                nrow = nrow(R_hsmm$censoring_probs$q), 
+                ncol = R_hsmm$J, 
+                byrow = TRUE)
+qjk = pj_mat + (1-pj_mat) * R_hsmm$censoring_probs$q
+
+qjk_long = qjk %>% as.data.frame() %>% 
+  mutate(variable = rownames(qjk)) %>% 
+  pivot_longer(., -variable, names_to = "state_name", values_to = "q" ) %>% 
+  mutate(state_name = state_name %>% factor(., levels = R_hsmm$state_names), 
+         state = state_name %>% as.numeric(),
+         state_color = R_hsmm$state_colors[state])
+
+ggplot(qjk_long, aes(x = state_name, y = q, fill = state_color)) + geom_bar(stat = "identity") + facet_grid(variable ~ .) + ylim(c(0,1)) + scale_fill_identity()
+
+```
+
+__Synthetic users characteristics__
+
+```{r datasets-synthetic-users}
+
+N_per_alpha = 30 
+alpha = rep(c(-Inf, -1, -0.5, 0, 0.5, 1, 2, 4), N_per_alpha)
+N_users = length(alpha)
+
+s_users = data.frame(
+  seq_id = 1:N_users, 
+  alpha = alpha,
+  temp_sd = runif(N_users, min = 0.05, max = 0.3),
+  mean_lE_sojourn = rnorm(N_users, mean = 10, sd = 3),
+  sd_lE_sojourn = 0.2 + rpois(N_users, lambda = 2),
+  mean_Lut_sojourn = rnorm(N_users, mean = 11, sd = 1),
+  sd_Lut_sojourn = 0.2 + rpois(N_users, lambda = 0.75)
+  )
+
+rm(alpha)
+
+```
+
+__Generating time-series__
+
+
+```{r datasets-Xsim, warning=FALSE}
+
+# 139 sec for 64 time-series
+Xsim = purrr::map_dfr(
+  .x = s_users$seq_id,
+  .f = function(sid){
+    #cat("\n",sid, "\n")
+    modified_hsmm = R_hsmm
+    
+    # modifying censoring probabilities
+    alpha = s_users$alpha[s_users$seq_id == sid]
+    beta = abs((3^alpha - 1)/(3^alpha + 1))
+    delta = ifelse(alpha > 0, 1, 0)
+    modified_hsmm$censoring_probs$p = 0 *modified_hsmm$censoring_probs$p
+    modified_hsmm$censoring_probs$q = qjk * (1 - beta) + beta * delta
+    
+    # modifying emission distributions
+    modified_hsmm$marg_em_probs$temp$params$sd = rep(s_users$temp_sd,R_hsmm$J)
+    # modifying sojourns
+    M = length(modified_hsmm$sojourn$M$d)
+    modified_hsmm$sojourn$lE$d = dnorm(1:M, 
+                                       mean = s_users$mean_lE_sojourn, 
+                                       sd = s_users$sd_lE_sojourn)
+    modified_hsmm$sojourn$Lut$d = dnorm(1:M, 
+                                        mean = s_users$mean_Lut_sojourn, 
+                                        sd = s_users$sd_Lut_sojourn)
+    
+    # specifying modified model
+    modified_hsmm = specify_hsmm(J = modified_hsmm$J,
+                                 init = modified_hsmm$init, trans = modified_hsmm$transition,
+                                 sojourn = modified_hsmm$sojourn, 
+                                 marg_em_probs = modified_hsmm$marg_em_probs,
+                                 censoring_probs = modified_hsmm$censoring_probs)
+    
+    # simulating sequence 
+    Xsim_i = simulate_hsmm(model = modified_hsmm, seq_id = as.character(sid), n_state_transitions = 100)
+  })
+
+
+```
+
+__Tracking behavior categories__
+
+```{r datasets-Xsim2}
+
+Xsim2  = Xsim %>% 
+  mutate(transitions = rbinom(nrow(Xsim), size = 1, prob = 0.001)) %>% 
+  group_by(seq_id) %>% 
+  mutate(tracking_sequence = 1+cumsum(transitions)) %>% 
+  group_by(seq_id, tracking_sequence) %>% 
+  mutate(tracking_category = sample(c("b","bp","btm","full"),1)) %>% 
+  mutate(temp = ifelse(tracking_category %in% c("b","bp"), NA, temp),
+         mucus = ifelse(tracking_category %in% c("b","bp"), NA, mucus),
+         LH = ifelse(tracking_category %in% c("b","bp","btm"), NA, LH),
+         preg = ifelse(tracking_category %in% c("b","btm"), NA, preg)) %>%
+  ungroup() %>% 
+  left_join(., s_users %>% mutate(seq_id = as.character(seq_id)), by = c("seq_id")) %>% 
+  select(-transitions, -tracking_sequence)
+  
+write_feather(Xsim2, path = "../Data/synthetic_data/Xsim.feather")
+
+```
+
+
+__Visualization of a synthetic time-series example__
+
+
+```{r datasets-synthetic-example,fig.width=12, fig.height=3, fig.cap="Example of a synthetic time-series."}
+
+plot_hsmm_seq(X = Xsim2 %>%  filter(seq_id == 4), model = R_hsmm)
+
+```
+
+
+__Synthetic dataset characteristics__
+
+```{r datasets-table-tracking-cat}
+
+table(tracking_category = Xsim2$tracking_category)  %>% 
+  kable(., format = "latex", booktabs = T, 
+        caption = "Number of data-point in each tracking category.")
+
+```
+
+
+```{r datasets-histogram-time-series-length, fig.width=4, fig.height=2, fig.cap="Histogram of simulated sequence length."}
+
+table(seq_id = Xsim2$seq_id) %>% 
+  data.frame() %>% 
+  set_colnames(c("seq_id","sequence_length")) %>% 
+  ggplot(., aes(x = sequence_length)) +
+  geom_histogram(bins = 50) + expand_limits(x = 0)
+
+```
+
+
+\newpage
+
+## Kindara app data pre-processing and partial manual labeling. {#kindaraprep}
+
+
+__pre-processing function__
+
+```{r datasets-kindara-prepare-obs-fun}
+source("Scripts/00_function_prepare_obs.R")
+```
+
+__pre-processing__
+
+```{r datasets-kindara-preproc}
+
+days = read_feather(path = paste0(IO$tmp_data, "days_selected_users.feather"))
+
+X = purrr::map_dfr(
+  .x = unique(days$user_id),
+  .f = function(uid) prepare_obs(d = days %>% filter(user_id == uid))
+) %>% 
+  rename(seq_id = user_id, t = rel_date)
+
+write_feather(X, path = paste0(IO$output_data, "processed_app_data.feather"))
+
+```
+
+
+__manual labeling__
+
+```{r datasets-kindara-ML}
+
+ML = read_feather(path = paste0(IO$output_data, "ML.feather"))
+
+```
+
+
+```{r datasets-kindara-ML-add, eval = FALSE}
+
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+
+ML = label_sequences(model = R_hsmm, X = X, ground_truth = ML)
+
+write_feather(ML, path = paste0(IO$output_data, "ML.feather"))
+
+```
+
+
+

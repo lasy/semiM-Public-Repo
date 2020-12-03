@@ -1,0 +1,123 @@
+---
+title: "Labelling self-tracked menstrual health records with hidden semi-Markov models"
+subtitle: "Supplementary Material"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y - %H:%M')`"
+output: 
+  bookdown::pdf_document2:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    fig_caption: true
+    df_print: kable
+    highlight: tango
+    latex_engine: xelatex
+bibliography: HsMm_bibliography.bib
+csl: science.csl
+mainfont: Corbel
+sansfont: Helvetica
+monofont: Menlo
+fontsize: 10pt
+urlcolor: NavyBlue
+fig_width: 7
+fig_height: 5
+abstract: |
+  This is the pdf-rendering of the analyses performed in `R` for the manuscript "Labeling self-tracked menstrual health records with hidden semi-Markov models". The R markdown (.Rmd) files used to generate this pdf can be found on [link]. Each section is a standalone Rmd file and can be run separately. On the same github repository, one can also find binary files with the specified models and the data related to each section, with the exception of the raw Kindara app data as user's time-series cannot be shared publicly to respect users' privacy and data ownership. 
+header-includes:
+  - \renewcommand{\abstractname}{}
+  - \let\counterwithout\relax
+  - \let\counterwithin\relax
+  - \usepackage{chngcntr}
+  - \counterwithin{figure}{section}
+  - \counterwithin{table}{section}
+  - \usepackage{float}
+  - \floatplacement{figure}{H}
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{array}
+  - \usepackage{multirow}
+  - \usepackage{wrapfig}
+  - \usepackage{float}
+  - \usepackage{colortbl}
+  - \usepackage{pdflscape}
+  - \usepackage{tabu}
+  - \usepackage{threeparttable} 
+  - \usepackage{threeparttablex} 
+  - \usepackage[normalem]{ulem} 
+  - \usepackage{makecell}
+  - \usepackage{xcolor}
+  - \newcommand{\lsy}[1]{\textcolor{BlueGreen}{[\text{LSY:\ }#1]}}
+keywords:
+  - hidden semi-Markov models
+  - hsmm
+  - fertility awareness
+  - digital health
+linestretch: 1
+geometry: "left=2cm, right=2cm, top=1.5cm, bottom=1.5cm"
+---
+
+\newpage
+
+\listoftables
+
+\listoffigures
+
+```{r main setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+source("Scripts/00_setup.R")
+```
+
+\newpage
+
+```{r child = '1_HSMM_models_specification.Rmd', cache=TRUE}
+```
+
+\newpage
+
+```{r child = '2_HSMM_datasets.Rmd', cache=TRUE}
+```
+
+\newpage
+
+
+```{r child = '3_HSMM_decoding.Rmd', cache=TRUE}
+```
+
+\newpage
+
+
+```{r child = '4_HSMM_performances.Rmd', cache=TRUE}
+```
+
+\newpage
+
+```{r child = '5_HSMM_predicting_periods.Rmd', cache=TRUE}
+```
+
+
+\newpage
+
+```{r child = '6_HSMM_within_state_dependencies.Rmd', cache=TRUE}
+```
+
+\newpage
+
+# Reproducibility receipt
+
+```{r repro_receipt, echo = FALSE, eval = TRUE, cache = FALSE, results='markup'}
+
+cat("Execution datetime:\n")
+print(Sys.time())
+cat("-------------------------------")
+cat("sessionInfo :\n\n\n")
+
+sessionInfo()
+
+```
+
+\newpage
+
+# References
+
+
+

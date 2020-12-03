@@ -1,0 +1,113 @@
+---
+title: "User selection for decoding and fitting"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+```{r idecod knitr setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r idecod setup, include = FALSE, eval = TRUE, cache = FALSE}
+source("Scripts/00_setup.R")
+```
+
+
+
+
+## Users subset selection
+
+To fit the model, we will use the time-series of a diverse subset of users.
+
+We will select users from these different categories:
+  
+  1. Users with pregnancies
+
+2. Users with many observations (mucus, temperature, LH tests)
+
+3. Users with few observations (just period)
+
+4. Users with very long time-series
+
+5. Users with long and with short cycles
+
+6. Both users who declared wanted to achieve and to avoid pregnancies
+
+
+```{r idecod users selection}
+
+users = read_feather(path = str_c(IO$output_data,"users.feather"))
+
+top_n = 30
+
+u1 = users %>% dplyr::filter(n_pos_preg_test > 0,
+                             n_days_obs >= 365,
+                             (batch %% 10) == 0 ) %>% mutate(u_type = "1") %>% head(top_n)
+
+u2 = users %>% dplyr::filter(n_days_obs >= 365,
+                             n_days_obs < 365*2,
+                             (n_temp/n_days_obs >= 1/2) | (n_mucus/n_days_obs >= 1/4) |  (n_LH_test/n_days_obs >= 1/10),
+                             (batch %% 10) == 0)%>% mutate(u_type = "2") %>% head(top_n)
+
+
+u3 = users %>% dplyr::filter(n_days_obs >= 365,
+                             n_days_obs < 365*2,
+                             (n_temp < 10) & (n_mucus < 5) &  (n_LH_test<3),
+                             (batch %% 10) == 0)%>% mutate(u_type = "3") %>% head(top_n)
+
+
+u4 = users %>% dplyr::filter(n_days_obs >= 5*365,
+                             (batch %% 10) == 0)%>%  mutate(u_type = "4") %>% head(top_n)
+
+
+u5 = users %>% dplyr::filter(round(average_cycle) %in% c(20,40),
+                             round(average_luteal) %in% c(11:14),
+                             n_days_obs >= 365,
+                             n_days_obs < 365*2,
+                             (batch %% 10) == 0)%>%  mutate(u_type = "5") %>% head(top_n)
+
+
+u = rbind(u1,u2,u3,u4,u5)
+u = ddply(u, .(user_id, batch), summarize,
+          u_type = min(u_type))
+u = u %>%  arrange(u_type, batch, user_id)
+
+dim(u)
+
+selected_users = users %>% dplyr::filter(user_id %in% u$user_id)
+
+write_feather(selected_users, path = str_c(IO$tmp_data,"selected_users.feather"))
+
+
+```
+
+```{r idecod retrieving their observations}
+
+days_selected_users = foreach(b = unique(u$batch), .combine = rbind) %do% {
+  cat(b,"\n")
+  days = read_feather(path = str_c(IO$output_data,"Days/days_",b,".feather"))
+  days = days %>% dplyr::filter(user_id %in% u$user_id)
+  days
+}
+
+write_feather(days_selected_users, path = str_c(IO$tmp_data,"days_selected_users.feather"))
+
+```
+
+
+
+
+
+
+
+
+

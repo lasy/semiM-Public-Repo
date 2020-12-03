@@ -1,22 +1,17 @@
 
-package_list = c('knitr','bookdown','styler',
-                 'tidyverse','magrittr','stringr',
-                 'readr','feather',
-                 'plyr','dplyr',
-                 'data.table',
-                 'SDMTools',
-                 'ggplot2','ggthemes','hexbin','mapdata','gridExtra','quantreg','grid',
-                 'plotly','cowplot',
+package_list = c('data.table',
+                 'cowplot',
                  'ggpubr',
-                 'scales','reshape',
-                 'HMM',
-                 'chron','lubridate',
-                 'foreach',
-                 'parallel','doParallel',
                  'tictoc',
-                 'mhsmm',
                  'igraph',
-                 'shiny'
+                 'shiny',
+                 'knitr','bookdown','styler', 
+                 'kableExtra',
+                 'feather',
+                 'tidyverse',
+                 'ggthemes',
+                 'magrittr',
+                 'sn'
 )
 
 pckgs = installed.packages()
@@ -30,5 +25,7 @@ for(package in package_list){
 }
 
 rm(package_list, pckgs,need.to.install,package)
+
+library(HiddenSemiMarkov)
 
 

@@ -1,3 +1,27 @@
+
+compute_expected_censoring_frequency = function(model, fj){
+  missing_probs = matrix(NA, nrow = 0, ncol = model$J)
+  for(var in names(model$parms.emission)) missing_probs = rbind(missing_probs, model$parms.emission[[var]]$missing_prob)
+  missing_probs = missing_probs %>% set_rownames(names(model$parms.emission))
+  prod_missing_probs = apply(missing_probs, 2, prod)
+  expected_censoring_frequency = sum(fj * (model$global_censoring_prob + (1-model$global_censoring_prob) * prod_missing_probs))
+  expected_censoring_frequency
+}
+
+compute_expected_missing_frequencies = function(model, fj){
+  missing_probs = matrix(NA, nrow = 0, ncol = model$J)
+  for(var in names(model$parms.emission)) missing_probs = rbind(missing_probs, model$parms.emission[[var]]$missing_prob)
+  missing_probs = missing_probs %>% set_rownames(names(model$parms.emission))
+  pj_mat = matrix(model$global_censoring_prob, nrow = nrow(missing_probs), ncol = model$J, byrow = TRUE)
+  fj_mat = matrix(fj, nrow = nrow(missing_probs), ncol = model$J, byrow = TRUE)
+  expected_missing_frequencies = rowSums(fj_mat * (pj_mat + (1-pj_mat) * missing_probs))    
+  expected_missing_frequencies
+}
+
+
+
+
+
 hsmmfit2 = function (x, model, mstep = NULL, M = NA, maxit = 100, lock.transition = FALSE, 
           lock.d = FALSE, graphical = FALSE) 
 {

@@ -9,6 +9,2439 @@ output: html_document
 
 
 
+
+```{r}
+
+  source("Scripts/00_setup.R")
+  load("Xm.Rdata")
+  load("ground_truth.Rdata")
+  load("FAM_full_init.Rdata")
+  
+  smoo = predict_states_hsmm(model = FAM_full_init, X = Xm, ground_truth = ground_truth, method = "smoothed", verbose = TRUE)
+  smoo4 = predict_states_hsmm(model = FAM_full_init, X = Xm %>% filter(seq_id == "sim_seq_4"), ground_truth = ground_truth, method = "smoothed", verbose = TRUE)
+  smoo4 = predict_states_hsmm(model = FAM_full_init, X = Xm %>% filter(seq_id == "sim_seq_4"), ground_truth = ground_truth, method = "smoothed", verbose = TRUE, trust_in_ground_truth = 0)
+
+  vit4 = predict_states_hsmm(model = FAM_full_init, X = Xm %>% filter(seq_id == "sim_seq_4"), ground_truth = ground_truth, method = "viterbi", verbose = TRUE)
+  GT_vit4 = vit4$state_seq %>% select(seq_id, t, state)
+  smoo4 = predict_states_hsmm(model = FAM_full_init, X = Xm %>% filter(seq_id == "sim_seq_4"), ground_truth = GT_vit4, method = "smoothed", verbose = TRUE, trust_in_ground_truth = 0)
+  
+  
+```
+
+
+```{r}
+  
+  
+    smoo = predict_states_hsmm(model = FAM_full_init, X = Xm, ground_truth = ground_truth, method = "smoothed", verbose = TRUE)
+    
+   ground_truth_tmp = ground_truth 
+    
+  smoo_i = predict_states_hsmm(model = FAM_full_init, X = Xm %>% filter(seq_id == "sim_seq_4"), ground_truth = ground_truth, method = "smoothed", verbose = TRUE)
+  vit_i = predict_states_hsmm(model = FAM_full_init, X = Xm %>% filter(seq_id == "sim_seq_4"), ground_truth = ground_truth, method = "viterbi", verbose = TRUE)
+  GT_vit_i = vit_i$state_seq %>% select(seq_id, t, state)
+  
+  ground_truth_tmp = ground_truth_tmp %>%
+          dplyr::full_join(., vit_i$state_seq %>% dplyr::select(seq_id, t, state) %>% dplyr::rename(state_vit = state), by = c("seq_id","t")) %>%
+          dplyr::mutate(state = ifelse(!is.na(state_vit),state_vit, state)) %>% dplyr::select(-state_vit)
+  
+ smoo_i_v = predict_states_hsmm(model = FAM_full_init, X = Xm %>% filter(seq_id == "sim_seq_4"), ground_truth = ground_truth_tmp, method = "smoothed", verbose = TRUE, trust_in_ground_truth = 0.75)
+ 
+     smoo = predict_states_hsmm(model = FAM_full_init, X = Xm, ground_truth = ground_truth_tmp, method = "smoothed", verbose = TRUE)
+
+ 
+ 
+ 
+```
+
+
+
+
+__Fitting the modified model to the simulated data with full ground-truth__
+
+
+
+```{r toy-fit-full-GT, fig.width=2.5, fig.height=2.5, fig.cap="Convergence of the EM when modified model is fitted to the data with the full ground-truth."}
+
+GT = X %>% select(seq_id, t, state)
+
+fitted_toy_full_GT = fit_hsmm(model = toy_modif_init, X = X, ground_truth = GT, lock.transition = TRUE, lock.sojourn = TRUE)
+
+plot_hsmm_fit_param(model = fitted_toy_full_GT)
+
+```
+
+```{r toy-fit-full-GT-em-dist, fig.height=10, fig.width=8, out.height='12cm', fig.cap="Comparison of the emission distributions between the initial, modified and fitted (with full ground-truth) models."}
+
+g_init = plot_hsmm_em_par(model = toy_init) + ggtitle("Initial model")
+
+g_modif = plot_hsmm_em_par(model = toy_modif_init) + ggtitle("Modified model")
+
+g_fitted = plot_hsmm_em_par(model = fitted_toy_full_GT$model) + ggtitle("Fitted model")
+
+ggarrange(g_init, g_modif, g_fitted, ncol = 1)
+
+```
+
+
+```{r toy-fit-full-GT-decoding, fig.height=5.5, fig.width=10, fig.cap="Comparison of the Forward-Backward decoding between the initial, modified and fitted (with full ground-truth) models.", warning=FALSE}
+
+#fwbw_decoding_init = predict_states_hsmm(model = toy_init, X = X, method = "smoothed")
+#fwbw_decoding_modif = predict_states_hsmm(model = toy_modif_init, X = X, method = "smoothed")
+fwbw_decoding_fitted = predict_states_hsmm(model = fitted_toy_full_GT$model, X = X, method = "smoothed")
+
+X_full_GT = X
+
+
+X_full_GT = X_full_GT %>% 
+  rename(state_ground_truth = state) %>% 
+  mutate(state_init = fwbw_decoding_init$state_seq$state, 
+         state_modif = fwbw_decoding_modif$state_seq$state,
+         state_fitted = fwbw_decoding_fitted$state_seq$state)
+
+plot_hsmm_seq(X = X_full_GT, model = toy_init)
+
+```
+
+
+
+
+  
+```{r}
+
+  # Xmc = .check_data(Xm, model = FAM_full_init)
+  # Xma = .augment_data(model = FAM_full_init, X = Xmc, verbose = TRUE)
+  # 
+  # b = sapply(1:model$J, function(state) model$compute_obs_probs_fun(model = model, X = Xma %>% filter(seq_id == "sim_seq_4"), state = state))
+  # 
+  # smoo_init = predict_states_hsmm(model = FAM_full_init, X = Xm %>% filter(seq_id == "sim_seq_4"), method = "smoothed", verbose = TRUE, graphical = TRUE)
+  # vit_init = predict_states_hsmm(model = FAM_full_init, X = Xm, method = "viterbi", verbose = TRUE)
+
+```
+  
+
+
+```{r}
+
+ 
+  # Data need to be simulated to compute the observation probabilities
+  X = .prepare_data_for_init(model = model, 
+                             nmin = nmin, verbose = verbose, 
+                             seq_sim_seed = seq_sim_seed)
+  
+  if(verbose) cat("Data simulated\n")
+  
+  # then we compute the observed probabilities
+  obs_probs = .compute_observed_probabilities(model = model, 
+                                              X = X, 
+                                              verbose = verbose)
+  
+  if(verbose) cat("Observation probabilities computed\n")
+
+```
+
+ 
+
+
+## FAM_b
+
+
+
+```{r real-data-b-model-name}
+model_name = "b"
+```
+
+
+
+Selecting the users.
+
+```{r}
+
+user_ids = user_agg$user_id[user_agg$user_group == model_name]
+
+```
+
+Loading the model.
+
+```{r}
+
+load(file = paste0(IO$tmp_data, "FAM_",model_name,".Rdata"), verbose = TRUE)
+FAM_model = eval(parse(text = paste0("FAM_",model_name)))
+FAM_spec = my_hsmm_bluid(hsmm = FAM_model)
+
+```
+
+Preparing the observations
+
+```{r}
+
+X = purrr::map_dfr(.x = user_ids, 
+                   .f = function(u) 
+                     FAM_model$prepare_obs_fun(d = days %>% filter(user_id == u) %>% arrange(date)) %>% 
+                     mutate(user_id = user_id %>% as.character())) %>% 
+  rename(seq_id = user_id, t = rel_date)
+
+```
+
+Loading the ground_truth
+
+```{r}
+
+manual_labels = read_feather(path = paste0(IO$output_data, "manual_labels_FAM_",model_name,".feather"))
+ground_truth = manual_labels %>% 
+  filter(user_id %in% user_ids) %>% 
+  rename(seq_id = user_id, t = rel_date) %>% 
+  select(seq_id, t, state_abbr) %>% 
+  mutate(state = match(state_abbr, FAM_model$states$abbr)) %>% 
+  select(-state_abbr)
+
+```
+
+Initialization of the model.
+
+```{r}
+
+FAM_init = initialize_hsmm(model = FAM_spec, X = X, ground_truth = ground_truth, method = "glm", verbose = FALSE)
+
+```
+
+Fitting of the model
+
+```{r}
+
+FAM_fitted = fit_hsmm(model = FAM_init, X = X, #ground_truth = ground_truth, 
+                           verbose = FALSE, 
+                           n_iter = 10,
+                           lock.sojourn = TRUE, lock.transition = TRUE)
+
+```
+
+
+Decoding the sequences.
+
+```{r}
+
+viterbi_init = predict_states_hsmm(model = FAM_init, X = X, method = "viterbi", verbose = FALSE)
+viterbi_fitted = predict_states_hsmm(model = FAM_fitted$model, X = X, method = "viterbi", verbose = FALSE)
+smoothed_fitted = predict_states_hsmm(model = FAM_fitted$model, X = X, method = "smoothed", verbose = FALSE)
+
+```
+
+### Performances
+
+```{r, fig.height=4, fig.width=12}
+
+plot_perf(name = model_name, model = FAM_init, 
+          fit_param = FAM_fitted$fit_param, 
+          GT = ground_truth, 
+          vit_init = viterbi_init$state_seq, vit_fitted = viterbi_fitted$state_seq)
+
+```
+
+
+
+## FAM_bx
+
+
+
+```{r}
+model_name = "bx"
+```
+
+
+
+Selecting the users.
+
+```{r}
+
+user_ids = user_agg$user_id[user_agg$user_group == model_name]
+
+```
+
+Loading the model.
+
+```{r}
+
+load(file = paste0(IO$tmp_data, "FAM_",model_name,".Rdata"), verbose = TRUE)
+FAM_model = eval(parse(text = paste0("FAM_",model_name)))
+FAM_spec = my_hsmm_bluid(hsmm = FAM_model)
+
+```
+
+Preparing the observations
+
+```{r}
+
+X = purrr::map_dfr(.x = user_ids, 
+                   .f = function(u) 
+                     FAM_model$prepare_obs_fun(d = days %>% filter(user_id == u) %>% arrange(date)) %>% 
+                     mutate(user_id = user_id %>% as.character())) %>% 
+  rename(seq_id = user_id, t = rel_date)
+
+```
+
+Loading the ground_truth
+
+```{r}
+
+manual_labels = read_feather(path = paste0(IO$output_data, "manual_labels_FAM_",model_name,".feather"))
+ground_truth = manual_labels %>% 
+  filter(user_id %in% user_ids) %>% 
+  rename(seq_id = user_id, t = rel_date) %>% 
+  select(seq_id, t, state_abbr) %>% 
+  mutate(state = match(state_abbr, FAM_model$states$abbr)) %>% 
+  select(-state_abbr)
+
+```
+
+Initialization of the model.
+
+```{r}
+
+FAM_init = initialize_hsmm(model = FAM_spec, X = X, ground_truth = ground_truth, method = "glm", verbose = FALSE)
+
+```
+
+Fitting of the model
+
+```{r}
+
+FAM_fitted = fit_hsmm(model = FAM_init, X = X, ground_truth = ground_truth, 
+                           verbose = FALSE, 
+                           n_iter = 10,
+                           lock.sojourn = TRUE, lock.transition = TRUE)
+
+```
+
+
+Decoding the sequences.
+
+```{r}
+
+viterbi_init = predict_states_hsmm(model = FAM_init, X = X, method = "viterbi", verbose = FALSE)
+viterbi_fitted = predict_states_hsmm(model = FAM_fitted$model, X = X, method = "viterbi", verbose = FALSE)
+smoothed_fitted = predict_states_hsmm(model = FAM_fitted$model, X = X, method = "smoothed", verbose = FALSE)
+
+```
+
+### Performances
+
+```{r, fig.height=4, fig.width=12}
+
+plot_perf(name = model_name, model = FAM_init, 
+          fit_param = FAM_fitted$fit_param, 
+          GT = ground_truth, 
+          vit_init = viterbi_init$state_seq, vit_fitted = viterbi_fitted$state_seq)
+
+```
+
+
+
+
+## FAM_no_temp
+
+
+
+```{r}
+model_name = "no_temp"
+```
+
+
+
+Selecting the users.
+
+```{r}
+
+user_ids = user_agg$user_id[user_agg$user_group == model_name]
+
+```
+
+Loading the model.
+
+```{r}
+
+load(file = paste0(IO$tmp_data, "FAM_",model_name,".Rdata"), verbose = TRUE)
+FAM_model = eval(parse(text = paste0("FAM_",model_name)))
+FAM_spec = my_hsmm_bluid(hsmm = FAM_model)
+
+```
+
+Preparing the observations
+
+```{r}
+
+X = purrr::map_dfr(.x = user_ids, 
+                   .f = function(u) 
+                     FAM_model$prepare_obs_fun(d = days %>% filter(user_id == u) %>% arrange(date)) %>% 
+                     mutate(user_id = user_id %>% as.character())) %>% 
+  rename(seq_id = user_id, t = rel_date)
+
+```
+
+Loading the ground_truth
+
+```{r}
+
+manual_labels = read_feather(path = paste0(IO$output_data, "manual_labels_FAM_",model_name,".feather"))
+ground_truth = manual_labels %>% 
+  filter(user_id %in% user_ids) %>% 
+  rename(seq_id = user_id, t = rel_date) %>% 
+  select(seq_id, t, state_abbr) %>% 
+  mutate(state = match(state_abbr, FAM_model$states$abbr)) %>% 
+  select(-state_abbr)
+
+```
+
+Initialization of the model.
+
+```{r}
+
+FAM_init = initialize_hsmm(model = FAM_spec, X = X, ground_truth = ground_truth, method = "glm", verbose = FALSE)
+
+```
+
+Fitting of the model
+
+```{r}
+
+FAM_fitted = fit_hsmm(model = FAM_init, X = X , ground_truth = ground_truth, 
+                           verbose = FALSE, 
+                           n_iter = 10,
+                           lock.sojourn = TRUE, lock.transition = TRUE)
+
+```
+
+
+Decoding the sequences.
+
+```{r}
+
+viterbi_init = predict_states_hsmm(model = FAM_init, X = X, method = "viterbi", verbose = FALSE)
+viterbi_fitted = predict_states_hsmm(model = FAM_fitted$model, X = X, method = "viterbi", verbose = FALSE)
+smoothed_fitted = predict_states_hsmm(model = FAM_fitted$model, X = X, method = "smoothed", verbose = FALSE)
+
+```
+
+### Performances
+
+```{r, fig.height=4, fig.width=12}
+
+plot_perf(name = model_name, model = FAM_init, 
+          fit_param = FAM_fitted$fit_param, 
+          GT = ground_truth, 
+          vit_init = viterbi_init$state_seq, vit_fitted = viterbi_fitted$state_seq)
+
+```
+
+
+
+## FAM_full
+
+
+
+```{r}
+model_name = "full"
+```
+
+
+
+Selecting the users.
+
+```{r}
+
+user_ids = user_agg$user_id[user_agg$user_group == model_name]
+
+```
+
+Loading the model.
+
+```{r}
+
+load(file = paste0(IO$tmp_data, "FAM_",model_name,".Rdata"), verbose = TRUE)
+FAM_model = eval(parse(text = paste0("FAM_",model_name)))
+FAM_spec = my_hsmm_bluid(hsmm = FAM_model)
+
+```
+
+Preparing the observations
+
+```{r}
+
+X = purrr::map_dfr(.x = user_ids, 
+                   .f = function(u) 
+                     FAM_model$prepare_obs_fun(d = days %>% filter(user_id == u) %>% arrange(date)) %>% 
+                     mutate(user_id = user_id %>% as.character())) %>% 
+  rename(seq_id = user_id, t = rel_date)
+
+```
+
+Loading the ground_truth
+
+```{r}
+
+manual_labels = read_feather(path = paste0(IO$output_data, "manual_labels_FAM_",model_name,".feather"))
+ground_truth = manual_labels %>% 
+  filter(user_id %in% user_ids) %>% 
+  rename(seq_id = user_id, t = rel_date) %>% 
+  select(seq_id, t, state_abbr) %>% 
+  mutate(state = match(state_abbr, FAM_model$states$abbr)) %>% 
+  select(-state_abbr)
+
+```
+
+Initialization of the model.
+
+```{r}
+
+FAM_init = initialize_hsmm(model = FAM_spec, X = X, ground_truth = ground_truth, method = "glm", verbose = FALSE)
+
+```
+
+Fitting of the model
+
+```{r}
+
+FAM_fitted = fit_hsmm(model = FAM_init, X = X , ground_truth = ground_truth, 
+                           verbose = FALSE, 
+                           n_iter = 10,
+                           lock.sojourn = TRUE, lock.transition = TRUE)
+
+```
+
+
+Decoding the sequences.
+
+```{r}
+
+viterbi_init = predict_states_hsmm(model = FAM_init, X = X, method = "viterbi", verbose = FALSE)
+viterbi_fitted = predict_states_hsmm(model = FAM_fitted$model, X = X, method = "viterbi", verbose = FALSE)
+smoothed_fitted = predict_states_hsmm(model = FAM_fitted$model, X = X, method = "smoothed", verbose = FALSE)
+
+```
+
+### Performances
+
+```{r, fig.height=4, fig.width=12}
+
+plot_perf(name = model_name, model = FAM_init, 
+          fit_param = FAM_fitted$fit_param, 
+          GT = ground_truth, 
+          vit_init = viterbi_init$state_seq, vit_fitted = viterbi_fitted$state_seq)
+
+```
+
+
+## Performances with missing variables
+
+Here, instead of decreasing the tracking frequency, we remove all observations for an increasingly large set of features.
+
+### Removing variables
+
+```{r perf-sim-removing-vars, fig.width=2.5, fig.height=2.5, fig.cap="EM status when fitting on sequences with decreasing tracking frequency."}
+
+RES = data.frame()
+var_sets = list(
+  full = c("temp","LH","mucus","preg","extra_log","bleeding"),
+  no_temp = c("LH","mucus","preg","extra_log","bleeding"),
+  bxp = c("preg","extra_log","bleeding"),
+  bx = c("extra_log","bleeding"),
+  b = c("bleeding"))
+
+for(var_set in names(var_sets)){
+  cat(var_set,"\n")
+  
+  #model
+  load(file = str_c(IO$tmp_data,"FAM_",var_set,"_spec.Rdata"), verbose = TRUE)
+  model = eval(parse(text = str_c("FAM_",var_set,"_spec")))
+  
+  # initialize the model
+  model_init = initialize_hsmm(model = model, method = "glm")
+  
+  # prepare the observations
+  Xvs = Xsim_FAM_spec %>% select(seq_id, t, state, all_of(var_sets[[var_set]]))
+  
+  # fit the model
+  model_fitted = fit_hsmm(model = model_init, X = Xvs, ground_truth = ground_truth, n_iter = 10, lock.transition = TRUE, lock.sojourn = TRUE)
+  
+  
+}
+  
+  
+    # we fit the model using partial ground truth from the 
+  FAM_full_fitted = fit_hsmm(model = FAM_full_init, X = Xm, ground_truth = ground_truth, n_iter = 10, lock.transition = TRUE, lock.sojourn = TRUE)
+  
+  
+}
+  
+  Xm = Xsim_FAM_spec %>%  add_missing_data(.,m = m)
+  
+  # we fit the model using partial ground truth from the 
+  FAM_full_fitted = fit_hsmm(model = FAM_full_init, X = Xm, ground_truth = ground_truth, n_iter = 10, lock.transition = TRUE, lock.sojourn = TRUE)
+
+  plot_hsmm_fit_param(FAM_full_fitted, title = str_c("m : ",m))
+  
+  vit_full_init = predict_states_hsmm(model = FAM_full_init, X = Xm, method = "viterbi")
+  vit_full_fitted = predict_states_hsmm(model = FAM_full_fitted$model, X = Xm, method = "viterbi")
+  #smoo_full_fitted = predict_states_hsmm(model = FAM_full_fitted$model, X = Xm, method = "smoothed")
+
+  Xm = Xm %>% mutate(m = m,
+                     state_vit_init = vit_full_init$state_seq$state,
+                     state_vit_fitted = vit_full_fitted$state_seq$state
+  )
+  RES = rbind(RES, Xm)
+}
+
+```
+
+
+
+### Performances
+
+
+```{r perf-sim-increasing-missingness-viz, fig.width = 9, fig.height = 3}
+
+states = FAM_full_init$state_names
+DF = data.frame()
+
+for(m in unique(RES$m)){
+  res = RES %>% filter(m == m)
+  overal_acc = res %>% 
+    summarize(acc_init = mean(state == state_vit_init, na.rm = TRUE),
+              acc_fitted = mean(state == state_vit_fitted, na.rm = TRUE))
+  acc_by_state = res %>% group_by(state) %>% 
+    summarize(acc_init = mean(state == state_vit_init, na.rm = TRUE),
+              acc_fitted = mean(state == state_vit_fitted, na.rm = TRUE),
+              .groups = "drop") %>% 
+    summarize(acc_init = mean(acc_init, na.rm = TRUE),
+              acc_fitted = mean(acc_fitted, na.rm = TRUE))
+  df = data.frame(model = c("init","fitted","init","fitted") %>% factor(., levels = c("init","fitted")), 
+                  acc_type = c("overall","overall","state average","state average"), 
+                  accuracy = c(overal_acc$acc_init, overal_acc$acc_fitted, acc_by_state$acc_init, acc_by_state$acc_fitted))
+  
+  g = ggarrange(
+    ggplot_confusion_matrix(true = states[res$state], decoded = states[res$state_vit_init], states = states) + ggtitle(str_c("m = ",m," - FAM_full init")),
+    ggplot_confusion_matrix(true = states[res$state], decoded = states[res$state_vit_fitted], states = states) + ggtitle(str_c("m = ",m," - FAM_full fitted")),
+    ggplot(df, aes(x = model, y = accuracy, fill = model))+ 
+      geom_bar(stat = "identity")+ facet_grid(acc_type ~ .) + 
+      geom_text(aes(y = 1.01, label = round(accuracy,2), col = model), vjust = 0) + ylim(c(0,1.05)) + guides(fill = FALSE, col = FALSE) + ylab("") + ggtitle("Accuracies"), 
+    nrow = 1,
+    widths = c(1,1,0.6)
+  )
+  
+  print(g)
+  
+  DF = rbind(DF, df %>% mutate(m = m))
+  
+}
+
+```
+
+
+```{r perf-sim-increasing-missingness-viz-all-m, fig.width = 6, fig.height = 3}
+
+
+ggplot(DF, aes(x = m, y = accuracy, col = model))+
+  geom_point()+geom_line()+
+  ylim(c(0,1))+
+  facet_grid(. ~ acc_type)
+
+```
+
+
+
+
+
+
+### Ground truth
+
+```{r perf-sim ground truth}
+
+ground_truth = Xsim_FAM_spec %>% select(seq_id, t, state)
+
+
+```
+
+
+## Model FAM_base
+
+```{r perf-sim load FAM_base}
+
+load(file = paste0(IO$tmp_data, "FAM_bxp.Rdata"), verbose = TRUE)
+FAM_base_spec = my_hsmm_bluid(hsmm = FAM_bxp)
+
+
+```
+
+
+```{r perf-sim ground_truth_base}
+
+ground_truth_base = ground_truth %>% 
+  mutate(state = case_when(
+    state == 1 ~ 1,
+    state %in% c(2,3,4,5) ~ 2,
+    state %in% c(6,7,8) ~ 3,
+    state %in% c(9,10,11,12,13) ~ state - 5,
+    state %in% c(14,15,16) ~ 9,
+    state %in% c(17,18,19,20) ~ state - 7
+  ))
+
+```
+
+
+
+```{r perf-sim FAM_base}
+
+
+FAM_base_init = initialize_hsmm(model = FAM_base_spec, method = "glm", verbose = FALSE)
+
+
+vit_base_init = predict_states_hsmm(model = FAM_base_init, X = Xsim_base, 
+                                    method = "viterbi", verbose = FALSE)
+
+FAM_base_fitted = fit_hsmm(model = FAM_base_init, X = Xsim_base, verbose = FALSE, 
+                           n_iter = 10, lock.sojourn = FALSE)
+
+vit_base_fitted = predict_states_hsmm(model = FAM_base_fitted$model, X = Xsim_base, 
+                                    method = "viterbi", verbose = FALSE)
+
+smoo_based_fitted = predict_states_hsmm(model = FAM_base_fitted$model, X = Xsim_base, 
+                                    method = "smoothed", verbose = FALSE)
+
+```
+
+
+## Model FAM_full
+
+First, we create a "decoded ground_truth" with the menses from FAM_base where Viterbi said Menses and the prob from smoothed was above 0.75.
+
+```{r decoded ground truth}
+
+ground_truth_d_base = vit_base_fitted$state_seq %>% filter(state == 1) %>% select(-state_deprecated)
+ground_truth_d_base = ground_truth_d_base %>% 
+  left_join(.,y = smoo_based_fitted$state_probs %>% filter(state == 1) %>% select(-local), 
+            by = c("seq_id", "t", "state"))
+ground_truth_d_base = ground_truth_d_base %>% filter(posterior > 0.75)
+
+```
+
+Then we fit the FAM_full model to the sequences with that ground truth and we evaluate the performances
+
+
+```{r FAM_full fitting and decoding}
+
+FAM_full_init = initialize_hsmm(model = FAM_full_spec, method = "glm", verbose = FALSE)
+
+FAM_full_fitted = fit_hsmm(model = FAM_full_init, X = Xsim_FAM_spec, ground_truth = ground_truth_d_base, 
+                           n_iter = 10, lock.transition = TRUE, lock.sojourn = TRUE, verbose = FALSE)
+
+
+vit_full_init = predict_states_hsmm(model = FAM_full_init, X = Xsim_FAM_spec, 
+                                    method = "viterbi", verbose = FALSE)
+
+vit_full_fitted = predict_states_hsmm(model = FAM_full_fitted$model, X = Xsim_FAM_spec, 
+                                      method = "viterbi", verbose = FALSE)
+
+
+```
+
+
+
+```{r performances}
+# 
+# vit_base_init$state_seq %>% rename(state_vit_init = state) %>% full_join(.,y = ground_truth_base %>% filter(state %in% c(1,5,7,10,13)), by = c("seq_id", "t")) %>% group_by(state) %>% summarize(accuracy = mean(state == state_vit_init, na.rm = TRUE), .groups = "drop")
+# 
+# ggplot(vit_base_init$state_seq , aes(x = t, y = 1*(state == 1)))+
+#   geom_line(data = ground_truth_base, aes(x = t, y = 1*(state == 1)), col = "blue")+
+#   geom_line(col = "red", alpha = 0.5)+
+#   geom_line(data = smoo_based_init$state_probs %>% filter(state == 1), 
+#             aes(x = t, y = posterior), alpha = 0.5)+
+#   # geom_line(data = smoo_based_init$state_probs %>% filter(state == 2), 
+#   #           aes(x = t, y = posterior), col = "lightblue1")+
+#   # geom_line(data = smoo_based_init$state_probs %>% filter(state == 3), 
+#   #           aes(x = t, y = posterior), col = "gold1")+
+#   facet_grid(seq_id ~ . )
+# 
+# ggplot(vit_base_init$state_seq , aes(x = t, y = state))+
+#   geom_line(data = ground_truth_base, aes(x = t, y = state), col = "blue")+
+#   geom_line(col = "red")+
+#   facet_grid(seq_id ~ . )
+# 
+# 
+# vit_base_fitted$state_seq %>% rename(state_vit = state) %>% full_join(.,y = ground_truth_base %>% filter(state %in% c(1,5,7,10,13)), by = c("seq_id", "t")) %>% group_by(state) %>% summarize(accuracy = mean(state == state_vit, na.rm = TRUE), .groups = "drop")
+# 
+# 
+# 
+# ggplot(vit_base_fitted$state_seq , aes(x = t, y = state))+
+#   geom_line(data = ground_truth_base, aes(x = t, y = state), col = "blue")+
+#   geom_line(col = "red")+
+#   facet_grid(seq_id ~ . )
+# 
+# 
+# ggplot(vit_base_fitted$state_seq , aes(x = t, y = 1*(state == 1)))+
+#   geom_line(data = ground_truth_base, aes(x = t, y = 1*(state == 1)), col = "blue")+
+#   geom_line(col = "red", alpha = 0.5)+
+#   geom_line(data = smoo_based_fitted$state_probs %>% filter(state == 1), 
+#             aes(x = t, y = posterior), alpha = 0.5)+
+#   facet_grid(seq_id ~ . )
+# 
+# 
+# 
+# 
+# vit_full_init$state_seq %>% rename(state_vit = state) %>% full_join(.,y = ground_truth, by = c("seq_id", "t")) %>% group_by(state) %>% summarize(accuracy = mean(state == state_vit, na.rm = TRUE), .groups = "drop") %>% plot(., ylim = c(0,1))
+# 
+# vit_full_fitted$state_seq %>% rename(state_vit = state) %>% full_join(.,y = ground_truth, by = c("seq_id", "t")) %>% group_by(state) %>% summarize(accuracy = mean(state == state_vit, na.rm = TRUE), .groups = "drop") %>% points(., col = "red")
+# 
+# vit_full_fitted$state_seq %>% rename(state_vit = state) %>% full_join(.,y = ground_truth, by = c("seq_id", "t")) %>% group_by(state) %>% summarize(accuracy = mean(state == state_vit, na.rm = TRUE), .groups = "drop") %>% mutate(mean_accuracy = mean(accuracy))
+# 
+# vit_full_init$state_seq %>% rename(state_vit = state) %>% full_join(.,y = ground_truth, by = c("seq_id", "t")) %>% group_by(state) %>% summarize(accuracy = mean(state == state_vit, na.rm = TRUE), .groups = "drop") %>% mutate(mean_accuracy = mean(accuracy))
+# 
+# 
+# vit_full_fitted$state_seq %>% rename(state_vit = state) %>% full_join(.,y = ground_truth, by = c("seq_id", "t")) %>% summarize(accuracy = mean(state == state_vit, na.rm = TRUE), .groups = "drop")
+# 
+# 
+# vit_full_init$state_seq %>% rename(state_vit = state) %>% full_join(.,y = ground_truth, by = c("seq_id", "t")) %>% summarize(accuracy = mean(state == state_vit, na.rm = TRUE), .groups = "drop")
+# 
+
+```
+
+
+
+
+## Performances with increasing levels of missingness
+
+To evaluate how well the model performs, we can gradually remove information.
+
+We control how much information is removed with the variable `m`.
+
+`m` is the fraction of the variables that is removed from the time-series. 
+
+We first fit and decode with only three variables (bleeding, preg tests and extra logs) to get the periods, then we fit and decode the time-series with all variables with the full model. The reason for this is that the simpler model is good at detecting the periods, and these can be passed on as "ground truth" to the full model as "anchor points".
+
+
+```{r perf-sim-increasing-missingness}
+
+res = list()
+
+for(m in seq(0,0.8,by = 0.2)){
+  cat(m,"\n")
+  
+  Xm = Xsim_FAM_spec %>%  add_missing_data(.,m = m)
+  Xm_base = Xm %>% 
+    mutate(extra_log = pmax(extra_log, !is.na(temp), mucus != "missing", LH != "missing") * 1)
+  
+  cat("\t Base model \n")
+  vit_base_init = predict_states_hsmm(model = FAM_base_init, X = Xm_base, method = "viterbi")
+  FAM_base_fitted = fit_hsmm(model = FAM_base_init, X = Xm_base, n_iter = 10, lock.transition = TRUE, lock.sojourn = TRUE)
+  vit_base_fitted = predict_states_hsmm(model = FAM_base_fitted$model, X = Xm_base, method = "viterbi")
+  smoo_base_fitted = predict_states_hsmm(model = FAM_base_fitted$model, X = Xm_base, method = "smoothed")
+  
+  ground_truth_d_base = vit_base_fitted$state_seq %>% filter(state == 1) %>% select(-state_deprecated)
+  ground_truth_d_base = ground_truth_d_base %>% 
+    left_join(.,y = smoo_based_fitted$state_probs %>% filter(state == 1) %>% select(-local), 
+              by = c("seq_id", "t", "state")) %>% filter(posterior > 0.75)
+  
+  cat("\t Full model \n")
+  vit_full_init = predict_states_hsmm(model = FAM_full_init, X = Xm, method = "viterbi")
+  FAM_full_fitted = fit_hsmm(model = FAM_full_init, X = Xm, n_iter = 10, lock.transition = TRUE, lock.sojourn = TRUE)
+  vit_full_fitted = predict_states_hsmm(model = FAM_full_fitted$model, X = Xm, method = "viterbi")
+  smoo_full_fitted = predict_states_hsmm(model = FAM_full_fitted$model, X = Xm, method = "smoothed")
+  
+  cat("\t Performances")
+  
+  this_m_res = list(m = m, 
+                    model_base = FAM_base_init, model_full = FAM_full_init,
+                    ground_truth = ground_truth, ground_truth_base = ground_truth_base,
+                    vit_base_init = vit_base_init$state_seq, vit_base_fitted = vit_base_fitted$state_seq, 
+                    vit_full_init = vit_full_init$state_seq, vit_full_fitted = vit_full_fitted$state_seq,
+                    base_fit_param = FAM_base_fitted$fit_param, 
+                    full_fit_param = FAM_full_fitted$fit_param)
+  
+  res[[as.character(m)]] = this_m_res
+}
+
+```
+
+
+```{r perf-sim-increasing-missingness-viz, fig.width = 12, fig.height = 12}
+
+for(m in names(res)){
+  this_m_res = res[[m]]
+  
+  g = plot_sim_performances(m = this_m_res$m, 
+                            model_base = this_m_res$model_base, model_full = this_m_res$model_full,
+                            ground_truth = this_m_res$ground_truth, ground_truth_base = this_m_res$ground_truth_base,
+                            vit_base_init = this_m_res$vit_base_init, vit_base_fitted = this_m_res$vit_base_fitted, 
+                            vit_full_init = this_m_res$vit_full_init, vit_full_fitted = this_m_res$vit_full_fitted,
+                            base_fit_param = this_m_res$base_fit_param, 
+                            full_fit_param = this_m_res$full_fit_param)
+  
+  print(g)
+  
+}
+
+```
+
+
+
+## Sources of variability
+
+```{r seeds init}
+
+
+global_seed = 10
+seeds = 11:16
+
+exps = c("all_different","all_same","seq_sim","Mimpute")
+
+
+```
+
+```{r seeds running it}
+
+all_output = data.frame()
+for(experiment in exps){
+  
+  output = data.frame()
+  
+  for(seed in seeds){
+    
+    seq_sim_seed = global_seed
+    Mimpute_seed = global_seed
+
+    if(experiment == "all_different"){
+      seq_sim_seed = seed
+      Mimpute_seed = seed
+    }
+    if(experiment == "seq_sim") seq_sim_seed = seed
+    if(experiment == "Mimpute") Mimpute_seed = seed
+
+    tic()
+    FAM_init = initialize_hsmm(model = FAM_spec, method = "glm", verbose = TRUE,
+                               nmin = 500,
+                               seq_sim_seed = seq_sim_seed, 
+                               Mimpute_seed = Mimpute_seed) 
+    toc()
+    
+    vit = predict_states_hsmm(model = FAM_init, X = Xsim_FAM_spec, method = "viterbi")
+    this_seed_output = vit$state_seq %>% 
+      select(-state_deprecated) %>% rename(state_vit = state) %>% 
+      mutate(seed = seed) %>% 
+      full_join(., y = ground_truth, by = c("seq_id", "t"))
+    
+    output = bind_rows(output, this_seed_output)
+  }
+  
+  
+  all_output = bind_rows( all_output, 
+                          output %>% group_by(seed) %>% 
+                            summarize(accuracy = mean(state_vit == state)) %>% 
+                            mutate(sd_acc = sd(accuracy),
+                                   exp = experiment))
+}
+
+```
+
+
+
+```{r seeds variability results}
+
+ggplot(all_output, aes(x = seed, y = accuracy))+
+  geom_line()+ facet_grid( . ~ exp)+ ylim(c(0.9,1))
+
+all_output %>% select(exp, sd_acc) %>% unique()
+
+```
+
+## Unbalanced classes for GLM
+
+```{r}
+
+s = 1
+
+Xs = Xsim_FAM_spec %>% filter(state == s) %>% select(-state, -seq_id, -t)
+Xs = impute_missing_data_at_random_given_state(model = FAM_spec, X = Xs, state = s)
+dim(Xs)
+Xs = unique(Xs)
+dim(Xs)
+
+Xo = Xsim_FAM_spec %>% filter(state != s) %>% select(-seq_id, -t)
+Xo = purrr::map_dfr(
+      .x = unique(Xo$state), 
+      .f = function(s) 
+        impute_missing_data_at_random_given_state(
+          model = FAM_spec, 
+          X = Xo %>% filter(state == s), 
+          state = s)
+    ) %>% select(-state)
+
+dim(Xo)
+Xo = unique(Xo)
+dim(Xo)
+Xo_full = Xo
+Xo = Xo[sample(1:nrow(Xo),nrow(Xs)),]
+dim(Xo)
+
+
+# A
+training_A = bind_rows(Xs %>%  mutate(is_state = 1),
+                     Xo %>%  mutate(is_state = 0))
+
+model_A = glm(is_state ~ bleeding + LH + mucus + temp + preg + extra_log, data = training_A, family = "binomial")
+
+df = data.frame(p = model_A$fitted.values, GT = training_A$is_state, exp = "A")
+
+# B
+training_B = bind_rows(Xs %>%  mutate(is_state = 1),
+                       Xs %>%  mutate(is_state = 1),
+                       Xo %>%  mutate(is_state = 0))
+
+model_B = glm(is_state ~ bleeding + LH + mucus + temp + preg + extra_log, data = training_B, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_B$fitted.values, GT = training_B$is_state, exp = "B"))
+
+# C
+training_C = bind_rows(Xs %>%  mutate(is_state = 1),
+                       Xo %>%  mutate(is_state = 0),
+                       Xo %>%  mutate(is_state = 0))
+
+model_C = glm(is_state ~ bleeding + LH + mucus + temp + preg + extra_log, data = training_C, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_C$fitted.values, GT = training_C$is_state, exp = "C"))
+
+# D
+training_D = bind_rows(Xs %>%  mutate(is_state = 1, r = row_number()) %>% filter(r %% 2 == 0),
+                       Xo %>%  mutate(is_state = 0))
+
+model_D = glm(is_state ~ bleeding + LH + mucus + temp + preg + extra_log, data = training_D, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_D$fitted.values, GT = training_D$is_state, exp = "D"))
+
+
+# E
+training_E = bind_rows(Xs %>%  mutate(is_state = 1),
+                       Xo %>%  mutate(is_state = 0, r = row_number()) %>% filter(r %% 2 == 0))
+
+model_E = glm(is_state ~ bleeding + LH + mucus + temp + preg + extra_log, data = training_E, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_E$fitted.values, GT = training_E$is_state, exp = "E"))
+
+# F
+training_F = bind_rows(Xs %>%  mutate(is_state = 1),
+                       Xo_full %>%  mutate(is_state = 0))
+
+model_F = glm(is_state ~ bleeding + LH + mucus + temp + preg + extra_log, data = training_F, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_F$fitted.values, GT = training_F$is_state, exp = "F"))
+
+# G
+training_G = bind_rows(Xs[rep(1:nrow(Xs),21),] %>%  mutate(is_state = 1),
+                       Xo_full %>%  mutate(is_state = 0))
+
+model_G = glm(is_state ~ bleeding + LH + mucus + temp + preg + extra_log, data = training_G, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_G$fitted.values, GT = training_G$is_state, exp = "G"))
+
+
+
+
+ggplot(df, aes(x = p, fill = factor(GT)))+ geom_histogram(position = "identity", binwidth = 0.02, alpha = 1) + geom_vline(xintercept = c(0,0.5,1)) + facet_grid(exp + GT ~ ., scales = "free_y")
+
+df_summary = df %>% group_by(exp) %>% 
+  summarise(accuracy = mean(round(p) == GT))
+
+```
+
+
+
+
+## Unbalanced classes for GLM 2
+
+```{r}
+
+s = 1
+
+Xs = Xsim_FAM_spec %>% filter(state == s) %>% select(-state, -seq_id, -t)
+Xs = impute_missing_data_at_random_given_state(model = FAM_spec, X = Xs, state = s)
+dim(Xs)
+Xs = unique(Xs)
+dim(Xs)
+
+Xo = Xsim_FAM_spec %>% filter(state != s) %>% select(-seq_id, -t)
+Xo = purrr::map_dfr(
+      .x = unique(Xo$state), 
+      .f = function(s) 
+        impute_missing_data_at_random_given_state(
+          model = FAM_spec, 
+          X = Xo %>% filter(state == s), 
+          state = s)
+    ) %>% select(-state)
+
+dim(Xo)
+Xo = unique(Xo)
+dim(Xo)
+Xo_full = Xo
+Xo = Xo[sample(1:nrow(Xo),nrow(Xs)),]
+dim(Xo)
+
+
+formula = "is_state ~ bleeding + extra_log"
+
+# A
+training_A = bind_rows(Xs %>%  mutate(is_state = 1),
+                     Xo %>%  mutate(is_state = 0))
+
+model_A = glm(formula, data = training_A, family = "binomial")
+
+df = data.frame(p = model_A$fitted.values, GT = training_A$is_state, exp = "A")
+
+# B
+training_B = bind_rows(Xs %>%  mutate(is_state = 1),
+                       Xs %>%  mutate(is_state = 1),
+                       Xo %>%  mutate(is_state = 0))
+
+model_B = glm(formula, data = training_B, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_B$fitted.values, GT = training_B$is_state, exp = "B"))
+
+# C
+training_C = bind_rows(Xs %>%  mutate(is_state = 1),
+                       Xo %>%  mutate(is_state = 0),
+                       Xo %>%  mutate(is_state = 0))
+
+model_C = glm(formula, data = training_C, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_C$fitted.values, GT = training_C$is_state, exp = "C"))
+
+# D
+training_D = bind_rows(Xs %>%  mutate(is_state = 1, r = row_number()) %>% filter(r %% 2 == 0),
+                       Xo %>%  mutate(is_state = 0))
+
+model_D = glm(formula, data = training_D, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_D$fitted.values, GT = training_D$is_state, exp = "D"))
+
+
+# E
+training_E = bind_rows(Xs %>%  mutate(is_state = 1),
+                       Xo %>%  mutate(is_state = 0, r = row_number()) %>% filter(r %% 2 == 0))
+
+model_E = glm(formula, data = training_E, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_E$fitted.values, GT = training_E$is_state, exp = "E"))
+
+# F
+training_F = bind_rows(Xs %>%  mutate(is_state = 1),
+                       Xo_full %>%  mutate(is_state = 0))
+
+model_F = glm(formula, data = training_F, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_F$fitted.values, GT = training_F$is_state, exp = "F"))
+
+# G
+training_G = bind_rows(Xs[rep(1:nrow(Xs),21),] %>%  mutate(is_state = 1),
+                       Xo_full %>%  mutate(is_state = 0))
+
+model_G = glm(formula, data = training_G, family = "binomial")
+
+df = bind_rows(df,
+               data.frame(p = model_G$fitted.values, GT = training_G$is_state, exp = "G"))
+
+
+
+
+ggplot(df, aes(x = p, fill = factor(GT)))+ geom_histogram(position = "identity", binwidth = 0.02, alpha = 1) + geom_vline(xintercept = c(0,0.5,1)) + facet_grid(exp + GT ~ ., scales = "free_y")
+
+df_summary = df %>% group_by(exp) %>% 
+  summarise(accuracy = mean(round(p) == GT))
+
+```
+
+
+
+### Sub-model selection
+
+We can reduce the full model to include just the ovulatory cycles for example.
+
+```{r idecod submodel}
+
+hsmm_full = hsmm
+hsmm = subset_model(hsmm = hsmm_full, model = 3)
+
+save(hsmm, file = str_c(IO$tmp_data, "hsmm_used_for_decoding.Rdata"))
+
+```
+
+We then need to select users for whom the sub-model will be able to decode the time-series.
+
+```{r idecod select the users that fulfil the conditions to be decoded with that specific model}
+
+if(max(hsmm$states$model) == 1){
+  # users with no positive pregnancy tests
+  selected_users = users %>% dplyr::filter(n_pos_preg_test == 0)
+  # users with no cycles shorter or longer than a given interval
+  cycles = days %>% 
+    dplyr::filter(first_day) %>% 
+    dplyr::select(user_id, date, rel_date) %>% 
+    arrange(user_id, rel_date) %>% 
+    group_by(user_id) %>% 
+    mutate(start = date,
+           end = lead(date)-days(1),
+           length = (end-start+1) %>% as.numeric(),
+           cycle_number = row_number()) %>% 
+    dplyr::filter(!((cycle_number == 1)&(length > 45)))
+  
+  selected_users_from_cycles = cycles %>% 
+    group_by(user_id) %>% 
+    dplyr::summarise(min_len = min(length, na.rm = TRUE),
+                     max_len = max(length, na.rm = TRUE)) %>% 
+    dplyr::filter((min_len >= 18) & (max_len <= 60))
+  
+  # users with no suspected pregnancies
+  no_suspected_pregnancies_users = obs %>% 
+    group_by(user_id) %>% 
+    dplyr::summarise(max_preg_hint = max(preg_hint, na.rm = TRUE)) %>% 
+    filter(max_preg_hint == 0)
+  
+  # users whose manual labels are included into the states of the sub-model
+  manual_labels_selection_users = manual_labels %>% 
+    group_by(user_id) %>% 
+    dplyr::summarise(manual_labels_ok = all(state_abbr %in% hsmm$states$abbr, na.rm = TRUE)) %>% 
+    full_join(., y = users %>% dplyr::select(user_id), by = "user_id") %>% 
+    filter(manual_labels_ok | is.na(manual_labels_ok))
+  
+  # intersection of these users:
+  intersection_users = inner_join(selected_users %>%  dplyr::select(user_id),
+                                  selected_users_from_cycles  %>%  dplyr::select(user_id))
+  intersection_users = inner_join(intersection_users, 
+                                  no_suspected_pregnancies_users %>% dplyr::select(user_id))
+  intersection_users = inner_join(intersection_users, 
+                                  manual_labels_selection_users %>% dplyr::select(user_id))
+  intersection_users = unlist(intersection_users)
+}else if(max(hsmm$states$model) == 2){
+  # gaps are allowed but not suspected pregnancies
+  
+  # users with no positive pregnancy tests
+  selected_users = users %>% dplyr::filter(n_pos_preg_test == 0)
+  
+  # users with no suspected pregnancies
+  no_suspected_pregnancies_users = obs %>% 
+    group_by(user_id) %>% 
+    dplyr::summarise(max_preg_hint = max(preg_hint, na.rm = TRUE)) %>% 
+    filter(max_preg_hint == 0)
+  
+  # users whose manual labels are included into the states of the sub-model
+  manual_labels_selection_users = manual_labels %>% 
+    group_by(user_id) %>% 
+    dplyr::summarise(manual_labels_ok = all(state_abbr %in% hsmm$states$abbr, na.rm = TRUE)) %>% 
+    full_join(., y = users %>% dplyr::select(user_id), by = "user_id") %>% 
+    filter(manual_labels_ok | is.na(manual_labels_ok))
+  
+  # intersection of these users:
+  intersection_users = inner_join(selected_users %>%  dplyr::select(user_id),
+                                  no_suspected_pregnancies_users  %>%  dplyr::select(user_id))
+  intersection_users = inner_join(intersection_users, 
+                                  manual_labels_selection_users %>% dplyr::select(user_id))
+  intersection_users = unlist(intersection_users)
+  
+}else{
+  intersection_users = unlist(obs$user_id)
+}
+
+```
+
+```{r idecod users filtering}
+
+manual_labels = manual_labels %>% dplyr::filter(user_id %in% intersection_users)
+days = days %>% dplyr::filter(user_id %in% intersection_users)
+users = users %>% dplyr::filter(user_id %in% intersection_users)
+
+obs = obs %>% dplyr::filter(user_id %in% intersection_users)
+
+```
+
+
+
+### Generating a dataset with random observations for each states with the initial emission probabilities
+
+```{r hsmm_em load the modified hsmm functions}
+
+refresh_mhsmm_LSY()
+
+```
+
+
+
+```{r hsmm_em generating random observations, echo=FALSE}
+
+N = 1000 # N is the number of time-point per state
+
+r_obs_long = foreach(state = 1:hsmm$n_states, .combine = rbind) %do%{
+  this_state_r_obs = generate_random_obs(n = N, parem = hsmm$emission_par_init, state = state) %>% 
+    as.data.frame() %>% set_colnames(hsmm$obs_names) %>% 
+    mutate(state_abbr =  hsmm$states$abbr[state], color = hsmm$state$colors[state],n = 1:N) %>% 
+    tidyr::pivot_longer(.,cols = hsmm$obs_names, names_to = "obs_name")
+  return(this_state_r_obs)
+}
+
+r_obs_long = r_obs_long %>% 
+  mutate(state_abbr = factor(state_abbr,  levels = hsmm$states$abbr),
+         obs_name = factor(obs_name, levels = hsmm$obs_names))
+
+nrow(r_obs_long)
+N * hsmm$n_states * hsmm$n_obs
+
+```
+
+
+
+```{r hsmm_em emissions viz, echo=FALSE}
+
+g_par_init = ggplot_viz_em_parm(r_obs = r_obs_long)
+
+g_par_init
+
+```
+
+
+
+
+### Emission probabilities from the manually labeled states
+
+While the initial emission probabilities are informed by prior knowledge, we want to also ensure that the emission parameters reflect what is observed in the manually labelled dataset.
+
+```{r hsmm_em loading labels and data}
+
+labels = read_feather(path = paste0(IO$output_data, "manual_labels.feather"))
+days = read_feather(path = paste0(IO$tmp_data, "days_selected_users.feather"))
+
+obs = foreach(user = unique(labels$user_id), .combine = rbind) %do%{
+  #cat(user,"\n")
+  this_user_day = days[which(days$user_id == user),]
+  if(nrow(this_user_day)>0){this_user_obs = create_observation_scores(d = this_user_day, features = hsmm$obs_names)
+  }else{this_user_obs = data.frame()}
+  return(this_user_obs)
+}
+
+obs_wide = bind_cols(obs %>% dplyr::select(user_id, rel_date),
+                     obs %>% dplyr::select(hsmm$obs_names))
+
+obs_wide_with_manual_labels = inner_join(obs_wide, labels,
+                                         by = c("user_id","rel_date"))
+
+obs_long = pivot_longer(obs_wide_with_manual_labels %>% dplyr::select(state_abbr, color, hsmm$obs_names),
+                        cols = hsmm$obs_names, names_to = "obs_name", values_to = "value") %>% 
+  dplyr::filter(!is.na(value)) %>% 
+  mutate(state_abbr = factor(state_abbr, levels = hsmm$states$abbr),
+         obs_name = factor(obs_name, levels = hsmm$obs_names))
+
+```
+
+```{r}
+
+g_par_manual_labels = ggplot_viz_em_parm(r_obs = obs_long)
+
+g_par_manual_labels
+
+```
+
+
+### Creating a dataset that combines randomly generated obs with the actual observations from the labelled time-points
+
+```{r combined dataset}
+
+r_obs_wide = pivot_wider(r_obs_long , id_cols = c("state_abbr","color","n"), names_from = "obs_name", values_from = "value") %>% 
+  dplyr::select(state_abbr, color, hsmm$obs_names) %>% 
+  mutate(source = "random_from_initial_manual_parameters")
+
+obs_wide_with_manual_labels_for_combined_dataset = obs_wide_with_manual_labels %>%  
+  dplyr::select(state_abbr, color, hsmm$obs_names) %>% 
+  mutate(source = "actual_with_manual_labels") 
+
+combined_obs = bind_rows(r_obs_wide, obs_wide_with_manual_labels_for_combined_dataset)
+
+```
+
+### Computing the emission probabilities from this combined dataset
+
+
+```{r emission probabilities from combined dataset}
+
+obs = combined_obs %>% select(hsmm$obs_names) %>% as.matrix()
+w = matrix(0, nrow = nrow(combined_obs), ncol = hsmm$n_states)
+w[cbind(1:nrow(w),match(combined_obs$state_abbr, hsmm$states$abbr))] = 1
+parem = compute_new_em_parms(obs = obs, w = w , parem = hsmm$emission_par_init)
+
+hsmm$emission_par = parem
+
+```
+
+
+```{r viz emission probabilities from combined dataset}
+
+combined_obs_long = pivot_longer(combined_obs %>% select(-source), cols = hsmm$obs_names, names_to = "obs_name", values_to = "value") %>% 
+  dplyr::mutate(state_abbr = factor(state_abbr, levels = hsmm$states$abbr),
+                obs_name = factor(obs_name, levels = hsmm$obs_name))
+
+g_par_combined = ggplot_viz_em_parm(r_obs = combined_obs_long)
+
+g_par_combined
+
+# I should actually generate synthetic data from the parem.
+
+
+ggsave(g_par_combined, filename = str_c(IO$panels,"initial_emission_distributions.pdf"), width = viz$full_width/10*4.2, height = viz$full_width/1.8, scale = 0.9)
+
+
+
+```
+
+
+
+
+
+### Logistic regression for the probability of each state given the observations
+
+
+We impute the missing data of the combined dataset (the part coming from the actual observations that had manual labels) using the initial  emission probabilities that we just computed
+
+```{r imputation for the combined dataset}
+
+combined_obs_imputed = impute_from_parem(obs = combined_obs %>% mutate(state = match(state_abbr, hsmm$states$abbr)), 
+                                         obs_names = hsmm$obs_names, n_states = hsmm$n_states, 
+                                         parem = hsmm$emission_par) %>% 
+  mutate(state_abbr = factor(state_abbr , levels = hsmm$states$abbr)) %>% 
+  select(-state)
+
+```
+
+
+
+```{r logistic regression for prob of each state given the observations}
+
+formula_str = str_c("is_state ~ ",str_c(hsmm$obs_names,collapse = " + "))
+
+all_glm_obs = combined_obs_imputed  # %>% dplyr::filter(source == "actual_with_manual_labels") # I'm not sure if to keep that filter.
+# Results are better with the filter.
+
+models = foreach(state = hsmm$states$abbr, .combine = c) %do% {
+  cat(state, "\n")
+  
+  # preparing a balanced dataset
+  obs_this_state = all_glm_obs %>%  dplyr::filter(state_abbr == state)  %>% mutate(is_state = 1)
+  #obs_this_state = combined_obs_imputed[which(combined_obs_imputed$state_abbr == state),] %>% mutate(is_state = 1)
+  obs_other_states = all_glm_obs %>%  dplyr::filter(state_abbr != state) %>% mutate(is_state = 0)
+  obs_other_states = obs_other_states[sample(1:nrow(obs_other_states), nrow(obs_this_state)),]  
+  glm_obs = bind_rows(obs_this_state, obs_other_states)
+  
+  # logistic regression
+  this_state_model = suppressWarnings(glm(formula = as.formula(formula_str), family = "binomial", data = glm_obs))
+  # accuracy
+  accuracy = 1 - sum(round(this_state_model$fitted.values) != glm_obs$is_state)/nrow(glm_obs)
+  cat("\t",accuracy, "\n")
+  
+  # keeping model
+  res = list(this_state_model)
+  names(res) = state
+  return(res)
+}
+
+hsmm$glm_models = models
+
+```
+
+
+```{r logistic regression for prob of each state given the observations viz}
+
+P_states = foreach(state = hsmm$states$abbr, .combine = bind_cols) %do% {
+  cat(state, "\n")
+  y = predict(object = hsmm$glm_models[[which(hsmm$states$abbr == state)]], newdata = combined_obs_imputed, type = "response")
+  y = data.frame(y)
+  colnames(y) = state
+  return(y)
+}
+
+
+P_states = P_states %>% mutate(manual_label = combined_obs_imputed$state_abbr)
+
+P_states_long = pivot_longer(P_states, -manual_label, names_to = "state_abbr",values_to = "probability")
+P_states_long = P_states_long %>% 
+  mutate(color = hsmm$states$colors[match(state_abbr, hsmm$states$abbr)],
+         manual_label = factor(manual_label, levels = hsmm$states$abbr))
+
+ggplot(P_states_long, aes(x = probability, fill = color))+
+  geom_histogram(position = "identity", alpha = 0.5)+
+  xlim(c(-0.1,1.1))+
+  scale_fill_identity()+
+  facet_wrap(manual_label ~ ., scale = "free_y")
+
+```
+
+
+
+
+### Weights on the variables in each states (for confidence score)
+
+
+```{r hsmm_em weights on the variables for each states, eval = FALSE, include = FALSE}
+
+
+weight_csv = str_c(IO$tmp_data, "weights.csv")
+
+if(!file.exists(weight_csv)){
+  
+  hsmm$weights = matrix(1, nrow = hsmm$n_states, ncol = hsmm$n_obs, dimnames = list(hsmm$states$abbr, hsmm$obs_names))
+  weights_key = matrix(str_c(rep(hsmm$states$abbr, each = hsmm$n_obs),"_",rep(hsmm$obs_names, hsmm$n_states)),
+                       nrow = hsmm$n_states, ncol = hsmm$n_obs,byrow = TRUE)
+  hsmm$weights[weights_key %in% str_c("M","_",c("bleeding","preg", "acf","preg_hint"))] = c(3,2,3,3)
+  hsmm$weights[weights_key %in% str_c("lE","_",c("LH","mucus","temp","preg","acf","preg_hint","obs_dens"))] =
+    c(2,2,2,0.5,3,2,0)
+  hsmm$weights[weights_key %in% str_c("hE","_",c("mucus","temp", "acf","preg_hint","obs_dens"))] = c(3,2,3,2,0)
+  hsmm$weights[weights_key %in% str_c("preO","_",c("LH","mucus", "acf","preg_hint","obs_dens"))] = c(3,3,3,2,0)
+  hsmm$weights[weights_key %in% str_c("O","_",c("LH","mucus","acf","preg_hint","obs_dens"))] = c(3,3,3,2,0)
+  hsmm$weights[weights_key %in% str_c("postO","_",c("LH","mucus","temp","acf","preg_hint","obs_dens"))] = c(3,3,3,3,2,0)
+  hsmm$weights[weights_key %in% str_c("Lut","_",c("LH","mucus","temp","acf","preg_hint","obs_dens"))] = c(2,2,3,3,2,0)
+  hsmm$weights[weights_key %in% str_c("P","_",c("temp","preg"))] = c(3,3)
+  hsmm$weights[weights_key %in% str_c("PL","_",c("temp","preg","preg_hint","obs_dens"))] = c(3,3,2,0.5)
+  hsmm$weights[weights_key %in% str_c("L","_",c("bleeding","temp"))] = c(3,3)
+  hsmm$weights[weights_key %in% str_c("PB1","_",c("temp","preg","acf","preg_hint"))] = c(2,3,3,3)
+  hsmm$weights[weights_key %in% str_c("PB2","_",c("bleeding","preg","acf","preg_hint","obs_dens"))] = c(2,2,3,3,0)
+  hsmm$weights[weights_key %in% str_c("PB3","_",c("acf","preg_hint","obs_dens"))] = c(3,3,0)
+  hsmm$weights[weights_key %in% str_c("B","_",c("bleeding","acf"))] = c(3,3)
+  hsmm$weights[weights_key %in% str_c("PP","_",c("preg"))] = c(1.5)
+  hsmm$weights[weights_key %in% str_c("BF","_",c("preg","acf"))] = c(2,2)
+  hsmm$weights[weights_key %in% str_c("Ano","_",c("temp","preg", "obs_dens" ))] = c(3,2,3)
+  
+  hsmm$weights
+  
+  hsmm$weights = hsmm$weights/rowSums(hsmm$weights)
+  
+  molten_weights = melt(hsmm$weights)
+  colnames(molten_weights) = c("state_abbr","variable","weight")
+  
+}else{
+  molten_weights = read_csv(file = weight_csv)
+  wide_weights = pivot_wider(molten_weights, id_cols = "state_abbr",names_from = "variable", values_from = "weight") %>% as.data.frame()
+  rownames(wide_weights) = wide_weights$state_abbr
+  wide_weights = wide_weights %>% dplyr::select(-state_abbr) %>%  as.matrix()
+  hsmm$weights = wide_weights
+}
+
+molten_weights = molten_weights %>% 
+  mutate(
+    state_abbr = state_abbr %>% factor(., levels = hsmm$states$abbr),
+    variable = variable %>% factor(., levels = hsmm$obs_names),
+    color = hsmm$states$colors[match(state_abbr, hsmm$states$abbr)])
+
+ggplot(molten_weights, aes(x = state_abbr, y = weight, fill = color))+
+  geom_bar(stat = "identity")+
+  scale_fill_identity()+
+  facet_grid(variable ~ .)
+
+
+```
+
+
+
+
+
+
+
+```{r EM approach for data imputation}
+
+
+X = obs %>% rename(seq_id = user_id, t = rel_date)
+XO = X %>%  filter(seq_id %in% unique(X$seq_id)[1:3])
+XI = XO
+
+n_iter = 10
+ll_tol = 1/200
+ll = c()
+for(it in 1:n_iter){
+  cat(it, "\n")
+  smoothed_res = predict_states_hsmm(object = hsmm_decode, 
+                                    newdata = XI , 
+                                    method = "smoothed", verbose = TRUE)
+
+  XI = impute_missing_data_at_random_given_state_weights(model = hsmm_decode, X = XO, state_probs = smoothed_res$state_probs)
+  
+  ll = c(ll, sum(smoothed_res$loglik$loglik))
+  cat("\tll: ",ll[it],"\n")
+  if(it > 2){
+    ll_diff = abs(ll[it]-ll[it-1])
+    rel_ll_diff = ll_diff/nrow(XI)
+    if(rel_ll_diff <= ll_tol) break()
+  }
+}
+
+
+smoothed_res_O = predict_states_hsmm(object = hsmm_decode, 
+                                    newdata = XO , 
+                                    method = "smoothed", verbose = TRUE)
+
+smoothed_res_I = predict_states_hsmm(object = hsmm_decode, 
+                                    newdata = XI , 
+                                    method = "smoothed", verbose = TRUE)
+
+
+table(non_imputed = smoothed_res_O$state_seq$s, imputed = smoothed_res_I$state_seq$s)
+mean(smoothed_res_O$state_seq$s == smoothed_res_I$state_seq$s)
+
+
+SRO = left_join(smoothed_res_O$state_seq %>% rename(user_id = seq_id, rel_date = t) %>% mutate(state_abbr = hsmm$states$abbr[s]), 
+                manual_labels %>% select(user_id, rel_date, state_abbr), 
+                by = c("user_id","rel_date")) %>% 
+  mutate(correct_decoding = state_abbr.x == state_abbr.y)
+
+SRI = left_join(smoothed_res_I$state_seq %>% rename(user_id = seq_id, rel_date = t) %>% mutate(state_abbr = hsmm$states$abbr[s]), 
+                manual_labels %>% select(user_id, rel_date, state_abbr), 
+                by = c("user_id","rel_date")) %>% 
+  mutate(correct_decoding = state_abbr.x == state_abbr.y)
+
+
+mean(SRO$correct_decoding, na.rm = TRUE)
+mean(SRI$correct_decoding, na.rm = TRUE)
+
+
+
+impute_missing_data_at_random_given_state_weights = function(model, X, state_probs){
+  Xi = X
+  weights = state_probs %>% select(seq_id, t, state, posterior) %>% 
+    pivot_wider(., id_cols = c("seq_id","t"), names_from = "state",values_from = "posterior") %>% 
+    select(-seq_id, -t) %>% 
+    as.matrix(.)
+
+  K = 1000
+  props = apply(weights * K, 1, round_preserve_sum) %>%  t()
+  n_missing_obs =  X %>% select(names(model$parms.emission)) %>% is.na() %>% colSums()
+  if(any(n_missing_obs > 0)){
+    for(var in names(model$parms.emission)[n_missing_obs > 0]){
+      j = which(is.na(X[, var]))
+      sj = sapply(j, function(i) sample(rep(1:model$J, props[i,]),1))
+      Random_values = sapply(1:model$J, function(s) generate_random_obs_par(n = K, par = model$parms.emission[[var]], state = s)) %>%  t()
+      kj = sample(1:K, length(j), replace = TRUE)
+      Xi[j,var] = Random_values[cbind(sj,kj)]
+    }
+  }
+  
+  Xi
+}
+
+
+round_preserve_sum <- function(x, digits = 0) {
+  up = 10 ^ digits
+  x = x * up
+  y = floor(x)
+  indices = tail(order(x-y), round(sum(x)) - sum(y))
+  y[indices] = y[indices] + 1
+  y / up
+}
+
+```
+
+
+
+
+
+```{r}
+
+
+check_data_deprecated = function(data){
+  if(mode(data)=="numeric" | mode(data)=="integer") {
+    warning("'newdata' is a primitive vector.  Assuming single sequence.")
+    X = list()
+    X$x = data
+    if(is.vector(data)){X$N = length(data)}else{X$N = nrow(data)}
+    if(X$N < 1){stop("'data' is empty\n")}
+  }else{
+    if(!all(c("x","N") %in% names(data))){stop("'data' must be a matrix of observation (single sequence) or a list where $N is a vector with the lengths of each sequence and $x is a matrix M x K matrix where M is the sum of the sequences lengths and K is the number of observed variables.\n")}
+    X = list(N = data$N, x = data$x)
+    # we check that the sequences lengths matches the dimensions of x
+    Nsum = sum(X$N)
+    if(is.vector(X$x)){XN = length(X$x)}else{XN = nrow(X$x)}
+    if(Nsum != XN){stop("the sum of $N must be equal to the length or the number of rows of $x\n")}
+  }
+  return(X)
+}
+
+
+```
+
+
+
+```{r}
+    # d_long = rbind(data.frame(state = rep(1:model$J, each = M), t = rep(1:M, model$J), d = as.vector(ds_o), step = "prev"), 
+    #                data.frame(state = rep(1:model$J, each = M), t = rep(1:M, model$J), d = as.vector(ds_i), step = "from fwbw"),
+    #                data.frame(state = rep(1:model$J, each = M), t = rep(1:M, model$J), d = as.vector(ds), step = "updated"))
+    # d_long = d_long %>% mutate(step = factor(step, levels = c("updated","from fwbw","prev")))
+    # g = ggplot(d_long %>%  filter(t <= 100), aes(x = t, y = step, fill = d))
+    # g + geom_tile()+
+    #   scale_fill_continuous(low = "white", high = "black")+
+    #   guides(fill = FALSE)+
+    #   facet_grid(state ~ .)
+
+
+    # matplot(ds_o, type = "l", lty = 1, xlim = c(1,100), col = rainbow(model$J, s = 0.9, v = 0.9, end = 0.8))
+    # matplot(ds_i, type = "l", lty = 2, xlim  = c(1,100), col = rainbow(model$J, s = 0.9, v = 0.9, end = 0.8), add = TRUE)
+    # matplot(ds, type = "l", lty = 3, col = rainbow(model$J, s = 0.9, v = 0.9, end = 0.8), add = TRUE)
+
+```
+
+
+```{r}
+
+
+predict_states_hsmm_forward_backward_all_at_once = function(model, X = X, verbose = FALSE){
+
+  X = check_data(data = X)
+  if(verbose){cat("Data checked \n")}
+  
+  # add variables N, NN, M, d, D, b 
+  augmented_model = augment_model(model = model, X = X, log = FALSE, m = -1e300)
+  if(verbose) cat("Model augmented \n")
+  
+  # shortcuts
+  J = augmented_model$J
+  N = augmented_model$N
+  NN = augmented_model$NN
+  M = augmented_model$M
+  Nseq = length(augmented_model$N)
+  SeqIDs = unique(X$seq_id)
+  nX = sum(N)
+  
+  # prior distribution on states
+  prior = data.frame(
+    seq_id = rep(X$seq_id, J),
+    t = rep(X$t, J),
+    state = rep(1:J, each = nrow(X)),
+    prior = augmented_model$b %>% as.vector(),
+    stringsAsFactors = FALSE
+    )
+    
+  # run the smoothed algorithm on all sequences at once
+  if(verbose) cat(str_c("Decoding sequences (",length(N),")... \n"))
+  
+  fwbw_res  = .C("backward",
+                 transition=as.double(augmented_model$transition), # transition probabilities
+                 init=as.double(augmented_model$init), # initial probabilities
+                 p=as.double(augmented_model$b), # prior probabilities for each state
+                 d=as.double(augmented_model$d), # sojourn (d)
+                 D=as.double(augmented_model$D), # sojourn (D)
+                 timelength=as.integer(N), # length of each sequence
+                 J=as.integer(J), # number of states
+                 M=as.integer(rep(M,J)), # length of longest sequence
+                 L1 = double(nX*J), # ??
+                 N = double(nX), # will return the likelihood
+                 eta = double(M*J), # ?? M
+                 F1=double(J*nX), # ??
+                 si=double(J*nX), # ??
+                 gamma=double(J*nX), # will return the posterior probabilities
+                 nsequences=as.integer(Nseq), # number of sequences
+                 totallength=as.integer(nX), # sum of lenghts of all sequences
+                 G=double(J*nX), # ??
+                 PACKAGE='mhsmm')
+  
+  # Check for errors
+  if(any(is.nan(fwbw_res$gamma))) { # gamma is the probability of being in each state at each time-point
+    stop("NaNs detected in posterior probabilities.")
+  }
+  if(any(fwbw_res$gamma<0)) fwbw_res$gamma = zapsmall(fwbw_res$gamma)      
+  if(any(fwbw_res$eta<0)) fwbw_res$eta = zapsmall(fwbw_res$eta)      
+  if(any(fwbw_res$N<0))  fwbw_res$N = zapsmall(fwbw_res$N)
+  
+  
+  if(verbose) cat("Formating results \n")
+  ##### Format results
+  # State probabilities
+  state_probs = prior %>% 
+    mutate(posterior = fwbw_res$gamma)
+  # State sequence
+  p = matrix(fwbw_res$gamma, ncol=J)
+  s = apply(p, 1, which.max); 
+  state_seq = X %>% select(seq_id, t) %>% 
+    mutate(s = s, likelihood = fwbw_res$N)
+  # Log Likelihood of each sequence
+  loglik = state_seq %>% 
+    mutate(ll = log(likelihood)) %>% 
+    group_by(seq_id) %>% 
+    summarize(loglik = sum(ll)) %>% 
+    ungroup()
+  
+  ##### return results
+  ans = list(state_seq = state_seq,
+             loglik = loglik,
+             state_probs = state_probs)
+  ans
+}
+
+
+```
+
+
+
+```{r idecod decoding, warning=FALSE}
+
+# building the hsmm model
+hsmm_init = bluid_hsmm(hsmm, M = max(N))
+save(hsmm_init, file = paste0(IO$output_data, "hsmm_init.Rdata"))
+
+
+# Decoding
+tic()
+viterbi_init = predict.hsmmspec(object = hsmm_init, newdata = obsdata, method = "viterbi")
+toc()
+
+
+tic()
+smoothed_init = predict.hsmmspec(object = hsmm_init, newdata = obsdata, method = "smoothed", debug = FALSE)
+toc()
+
+
+```
+
+
+
+```{r test obs, eval = FALSE, include = FALSE}
+
+# 02a095  # still need to figure out why M_hint shoots after the delivery
+# 1225a5 # still need to figure out how to get better periods :)
+# 48fc5b
+# ee6255
+
+# 25c400 # still need to decide smth for the long_high_temp # FIXED
+# 5f638 # still need to decide smth for the long_high_temp # FIXED
+# 00dae # also this one has weird long_high_temp # FIXED BUT weird periods when there is no bleeding...?!
+
+# 295421 # 
+
+
+user = str_subset(unique(days$user_id),"0d758")
+d = days %>% filter(user_id == user)
+ml = manual_labels %>% dplyr::filter(user_id == user) %>%  mutate(name = "States\n(manual labels)")
+o = create_observation_scores(d = d, features = hsmm$obs_names, return_tmp = TRUE)
+user_data = list(N = nrow(o), x = o %>% select(hsmm$obs_names) %>% as.matrix()); class(user_data) = "hsmm.data"
+object = hsmm_init;  newdata = user_data; method = "viterbi"
+viterbi_test = predict.hsmmspec(object = object, newdata = newdata, method = method)
+plot(viterbi_test$s, pch = 16, col = hsmm$states$colors[viterbi_test$s])
+points(o$bleeding+1, type = "l")
+points(o$M_hint+1, type = "l", col = "red")
+points(o$preg_hint+1, type = "l", col = "blue")
+
+
+dec = o %>%  select(user_id, rel_date) %>% 
+  mutate(state_num = viterbi_test$s,
+         color = hsmm$states$colors[viterbi_test$s],
+         name = "Viterbi")
+
+o = o %>% 
+  select(user_id, rel_date, susp_ano, bleeding, M_hint, bleeding_in_5d, mucus, fmucus,LH, temp, bleeding_density_5d, acf, preg,long_high_temp, preg_hint, gap_Xd)
+plot_user_history(o = o, states_labels_list = list(viterbi = dec, manual_labels = ml))
+
+
+
+
+
+
+```
+
+```{r test, eval = FALSE, include = FALSE}
+
+user = "2ecaf02f2ac94ad3f32afa471b8db2707255aa79"
+
+j = which(obs$user_id == user)
+j = j[1:100]
+user_data = list(N = length(j), x = obsdata$x[j,]); class(user_data) = "hsmm.data"
+object = hsmm_init;  newdata = user_data; method = "viterbi"
+viterbi_test = predict.hsmmspec(object = object, newdata = newdata, method = method)
+my_seq = c(rep(1,3),rep(2,8),4,5,6,7,7,rep(8,12), 
+           rep(1,4),rep(2,5),4,5,6,7,7,rep(8,11), 
+           rep(1,2),rep(2,10),4,5,6,7,7,rep(8,10),
+           rep(1,3), rep(2,8),4,5,6,7,7,8,8,8,8)
+
+par(mfrow = c(2,1), mar = rep(1,4))
+plot(viterbi_test$s, type = "b", ylim = c(0,8), pch = 16, col = hsmm$states$colors[viterbi_test$s])
+points(my_seq, type = "b", pch = 4, col = "black") # hsmm$states$colors[my_seq]
+points(user_data$x[,1], type = "l", col = "red")
+
+matplot(viterbi_test$alpha, type = "l", lty = 1, ylim = c(-100,0), col = hsmm$states$colors)
+
+matplot(viterbi_test$psi_state, type = "l", lty = 1, col = hsmm$states$colors)
+
+matplot(viterbi_test$psi_time, type = "l", lty = 1, col = hsmm$states$colors)
+
+
+k = apply(viterbi_test$alpha, 1, which.max)
+
+
+matplot(viterbi_test$p_i, type = "l", lty = 1,  col = hsmm$states$colors)
+
+
+ll = compute_log_likelihood(seq = viterbi_test$s, model = hsmm_init, obsdata = user_data)
+my_ll = compute_log_likelihood(seq =  my_seq, model = hsmm_init, obsdata = user_data)
+
+viterbi_test$loglik
+
+
+matplot(viterbi_test$alpha, type = "l", lty = 1, ylim = c(-100,0), col = hsmm$states$colors)
+points(cumsum(ll), type = "l", lwd = 2)
+points(cumsum(my_ll), type = "l", lwd = 2, col = "green")
+
+#points(apply(viterbi_test$alpha, 1, max), type = "l", col = "green")
+
+
+```
+
+
+
+
+
+
+```{r tests, eval = FALSE, include = FALSE}
+
+# hsmm_init$sojourn$d %>%  head()
+# hsmm_init$sojourn$d[,2] = hsmm_init$sojourn$d[,2]*0
+# hsmm_init$sojourn$d[5,2] = 1
+# hsmm_init$sojourn$d[,3] = hsmm_init$sojourn$d[,3]*0
+# hsmm_init$sojourn$d[2,3] = 1
+# hsmm_init$transition[3,2] = 0
+# hsmm_init$transition[3,4] = 1
+
+hsmm_init$transition[1,2] = 1 - 1/100000
+hsmm_init$transition[1,8] = 0 + 1/100000
+
+
+
+#user = "2ecaf02f2ac94ad3f32afa471b8db2707255aa79"
+# user = "106a623d3e39d72e6ebca133510d3cb5007e2efc"
+user = "54c36cec0d71d5f9627ecb84ae133cc27902fe7a"
+j = which((obs$user_id == user) & (obs$rel_date %in% 300:400) ) # 
+x = obs_mat[j,]
+x_0 = x
+
+newdata = list(x = as.matrix(x_0), N = length(j))
+viterbi_init = predict.hsmmspec(object = hsmm_init, newdata = newdata, method = "viterbi")
+p = sapply(1:hsmm$n_states, 
+           function(state) compute_prob(obs = x_0, state = state, glm_model = hsmm_init$glm_models[[state]], parem = hsmm_init$parms.emission))
+
+par(mfrow = c(2,1))
+matplot(obs$rel_date[j], x_0, type = "l",  lty = 1, col = c("red","black","blue","purple","black","gray","green3","deeppink","red4", "yellow"))
+points(obs$rel_date[j], x_0[,9], type = "l", lwd = 2, col = "yellow")
+matplot(obs$rel_date[j],p[,c(1,2,5,7,8)], type = "l", lty = 1, col = hsmm$states$colors[c(1,2,5,7,8)], ylim = c(0, 1.11))
+points(obs$rel_date[j],rep(1.06,length(j)),pch = "|", col = hsmm$states$colors[viterbi_init$s])
+abline(h = 0, lty = 3)
+
+par(mfrow = c(1,1))
+matplot(obs$rel_date[j],p[,c(1,2,5,7,8)], type = "l", lty = 1, col = hsmm$states$colors[c(1,2,5,7,8)], ylim = c(0, 1.11))
+points(obs$rel_date[j],rep(1.06,length(j)),pch = "|", col = hsmm$states$colors[viterbi_init$s])
+abline(h = 0, lty = 3)
+
+
+
+
+
+
+
+
+pp = foreach(i = 1:100, .combine = bind_rows) %do% {
+  cat(i, "\n")
+  s = sample(1:hsmm$n_states, 1)
+  x = as.data.frame(x_0)
+  x = x %>% dplyr::mutate(
+    n_LH = sum(is.na(LH)),
+    LH = replace_na(generate_random_obs_par(n = n_LH, par = hsmm_init$parms.emission[[2]], state = s)),
+    n_mucus = sum(is.na(mucus)),
+    mucus = replace_na(generate_random_obs_par(n = n_mucus, par = hsmm_init$parms.emission[[3]], state = s)),
+    n_temp =  sum(is.na(temp)),
+    temp = replace_na(generate_random_obs_par(n = n_temp, par = hsmm_init$parms.emission[[4]], state = s)),
+    n_preg = sum(is.na(preg)),
+    preg = replace_na(generate_random_obs_par(n = n_preg, par = hsmm_init$parms.emission[[5]], state = s)),
+    n_acf = sum(is.na(acf)),
+    acf = replace_na(generate_random_obs_par(n = n_acf, par = hsmm_init$parms.emission[[7]], state = s)),
+  )
+  x = x %>% select(-starts_with("n_")) %>% as.matrix()
+  
+  p = sapply(1:hsmm$n_states, 
+           function(state) compute_prob(obs = x, state = state, glm_model = hsmm_init$glm_models[[state]], parem = hsmm_init$parms.emission))
+
+  p = as.data.frame(p) %>% 
+    mutate(rel_date = 1:nrow(p))
+  return(p)
+}
+
+g1 = ggplot(pp %>% filter(rel_date <= 40), aes(x = rel_date, y = V1))+
+  geom_point(alpha = 0.1, col = hsmm$states$colors[1])+
+  stat_summary(fun = median, geom = "line", col = hsmm$states$colors[1])
+
+g2 = ggplot(pp %>% filter(rel_date <= 40), aes(x = rel_date, y = V2))+
+  geom_point(alpha = 0.1, col = hsmm$states$colors[2])+
+  stat_summary(fun = median, geom = "line", col = hsmm$states$colors[2])
+
+g3 = ggplot(pp %>% filter(rel_date <= 40), aes(x = rel_date, y = V3))+
+  geom_point(alpha = 0.1, col = hsmm$states$colors[3])+
+  stat_summary(fun = median, geom = "line", col = hsmm$states$colors[3])
+
+g7 = ggplot(pp %>% filter(rel_date <= 40), aes(x = rel_date, y = V7))+
+  geom_point(alpha = 0.1, col = hsmm$states$colors[7])+
+  stat_summary(fun = median, geom = "line", col = hsmm$states$colors[7])
+
+g8 = ggplot(pp %>% filter(rel_date <= 40), aes(x = rel_date, y = V8))+
+  geom_point(alpha = 0.1, col = hsmm$states$colors[8])+
+  stat_summary(fun = median, geom = "line", col = hsmm$states$colors[8])
+
+p_summary = pp %>% group_by(rel_date) %>% summarize_all(median)
+ppp = p_summary %>% select(-rel_date) %>% as.matrix()
+
+par(mfrow = c(3,1), mar = 0.5+c(1,0,0,0))
+matplot(x_0, type = "l", lty = 1, xlim = c(0,340), col = c("red","black","blue","purple","black","gray","green3","deeppink","red4"))
+matplot(p[,c(1,2,3,7,8)], type = "l", lty = 1, col = hsmm$states$colors[c(1,2,3,7,8)], xlim = c(0,340))
+matplot(ppp[,c(1,2,3,7,8)], type = "l", lty = 1, col = hsmm$states$colors[c(1,2,3,7,8)], xlim = c(0,340))
+
+
+
+
+
+
+plot(viterbi_init$s/8+1.05, type = "l", ylim = c(0,2), xlim = c(0,340))
+points(viterbi_init$s/8+1.05, pch = 16, cex = 0.5, col = hsmm$states$colors[viterbi_init$s])
+p = sapply(1:hsmm$n_states, 
+           function(state) compute_prob(obs = x, state = state, glm_model = hsmm_init$glm_models[[state]], parem = hsmm_init$parms.emission))
+matplot(p[,c(1,2,3,7,8)], type = "l", lty = 1, col = hsmm$states$colors[c(1,2,3,7,8)], add = TRUE)
+
+# initial imputation
+x = as.data.frame(x_0)
+x = x %>% dplyr::mutate(
+  LH = ifelse(bleeding > 0, 0, LH),
+  LH = replace_na(0.1),
+  mucus = ifelse(LH == 1, 0.8, 0.1),
+  mucus = replace_na(0),
+  temp = replace_na(0),
+  preg = replace_na(0),
+  acf = replace_na(0.6)
+)
+x = as.matrix(x)
+old_x = (x+1)*2
+while(sum(abs(x - old_x)) > 10){
+  newdata = list(x = x, N = length(j))
+  viterbi_init = predict.hsmmspec(object = hsmm_init, newdata = newdata, method = "viterbi")
+  old_x = x
+  x = as.data.frame(x_0)
+  x = x %>% dplyr::mutate(
+    state = viterbi_init$s,
+    LH = replace_na(most_probable_value(par = hsmm_init$parms.emission[[2]], state = state)),
+    mucus = replace_na(most_probable_value(par = hsmm_init$parms.emission[[3]], state = state)),
+    temp = replace_na(most_probable_value(par = hsmm_init$parms.emission[[4]], state = state)),
+    preg = replace_na(most_probable_value(par = hsmm_init$parms.emission[[5]], state = state)),
+    acf = replace_na(most_probable_value(par = hsmm_init$parms.emission[[7]], state = state)),
+  )
+  x = x %>% select(-state) %>% as.matrix()
+  
+  plot(viterbi_init$s/8+1.05, type = "l", ylim = c(0,2), xlim = c(0,340))
+  points(viterbi_init$s/8+1.05, pch = 16, cex = 0.5, col = hsmm$states$colors[viterbi_init$s])
+  p = sapply(1:hsmm$n_states, 
+             function(state) compute_prob(obs = old_x, state = state, glm_model = hsmm_init$glm_models[[state]], parem = hsmm_init$parms.emission))
+  matplot(p[,c(1,2,3,7)], type = "l", lty = 1, col = hsmm$states$colors, add = TRUE)
+  
+}
+
+
+par(mfrow = c(1,1))
+
+plot(viterbi_init$s, type = "l", xlim = c(0,340))
+points(viterbi_init$s, pch = 16, cex = 0.5, col = hsmm$states$colors[viterbi_init$s])
+
+
+plot(viterbi_init$s/8+1.1, type = "l", ylim = c(0,2), xlim = c(245,340), col = "gray")
+points(viterbi_init$s/8+1.1, pch = 16, cex = 0.5, col = hsmm$states$colors[viterbi_init$s])
+p = sapply(1:hsmm$n_states, 
+           function(state) compute_prob(obs = x, state = state, glm_model = hsmm_init$glm_models[[state]], parem = hsmm_init$parms.emission))
+matplot(p, type = "l", lty = 1, col = hsmm$states$colors, add = TRUE)
+
+p[1,]
+
+trans = hsmm$trans
+trans[trans == 0] = 0.0000000000001
+
+P = log(hsmm$init) + log(p[1,])
+P = matrix(P, ncol = 1)
+#s = which.max(P)
+n_in_s = matrix(1, ncol = 1, nrow = nrow(P))
+path = rep(0, nrow(P))
+for(i in 1:40){
+  cat(i,"\n")
+  p_sojourn_stay = 0*n_in_s[,i]
+  for(k in 1:nrow(n_in_s)){p_sojourn_stay[k] = 1 - sum(hsmm$sojourn[k,1:n_in_s[k,i]])}
+  P_stay = P[,i] + log(p_sojourn_stay) + log(p[i+1,last(s)])
+  cat("\t P_stay: ", P_stay,"\n")
+  P_trans = P[,i] + log(trans[,]) + log(hsmm$sojourn[,n_in_s]) + log(p[i,])
+  k = apply(P_trans, 2, which.max)
+  P_trans = apply(P_trans, 1, max)
+  combined = cbind(P_stay, P_trans)
+  j = apply(combined, 1, which.max)
+  n_in_s = cbind(n_in_s, (j == 1) * n_in_s + 1)
+  new_P = apply(combined,1,max)
+  cat("\t P_trans: ", P_trans,"\n")
+  cat("\t new_P : ",new_P, "\n")
+  P = cbind(P, new_P); colnames(P) = 1:ncol(P)
+}
+
+n_in_s
+print(round(P,3))
+s = apply(P, 2, which.max)
+
+plot(s)
+
+```
+
+
+
+
+
+
+```{r}
+
+tic()
+smoothed_init = list()
+smoothed_init$p = matrix(0, nrow = nrow(obs), ncol = hsmm$n_states)
+smoothed_init$s = rep(0, nrow(obs))
+problematic_users = c()
+obsdata_for_fit = list(); class(obsdata_for_fit) = "hsmm.data"
+labels_for_fit = data.frame()
+for(i in 1:length(obsdata$N)){
+  cat("USER ",i,"\n")
+  this_user_N = obsdata$N[i]
+  j = which(obs$user_id == names(this_user_N))
+  length(j)
+  Nmax = length(j);
+  this_user_obsdata = list(N = this_user_N, x = obsdata$x[j,])
+  #Nmax = 2020; #2780
+  #this_user_obsdata = list(N = Nmax, x = obsdata$x[j[1:Nmax],])
+  class(this_user_obsdata) = "hsmm.data"
+  
+  object = hsmm_init;  newdata = this_user_obsdata; method = "smoothed"; debug = FALSE
+  this_user_smoothed_init = try(predict.hsmmspec(object = object, newdata = newdata, method = method, debug = debug))
+  #class(this_user_smoothed_init) != "try-error"
+  
+  if(class(this_user_smoothed_init) == "try-error"){
+    this_user_p = matrix(0, nrow = this_user_N, ncol = hsmm$n_states)
+    this_user_s = rep(NA, this_user_N)
+    problematic_users = c(problematic_users, i)
+  }else{
+    this_user_p = this_user_smoothed_init$p
+    this_user_s = this_user_smoothed_init$s
+    if(i == 1){
+      obsdata_for_fit$N = this_user_N; obsdata_for_fit$x = obsdata$x[j,]
+    }else{
+      obsdata_for_fit$N = c(obsdata_for_fit$N, this_user_N); obsdata_for_fit$x = rbind(obsdata_for_fit$x, obsdata$x[j,])
+    }
+    labels_for_fit = rbind(labels_for_fit, labels[j,])
+  }
+  smoothed_init$p[j,] = this_user_p
+  smoothed_init$s[j] = this_user_s
+}
+toc()
+
+```
+
+
+```{r}
+
+smoothed_fitted = list()
+smoothed_fitted$p = 0*smoothed_init$p
+smoothed_fitted$s = 0*smoothed_init$s
+for(i in 1:length(obsdata$N)){
+  cat("USER ",i,"\n")
+  this_user_N = obsdata$N[i]
+  j = which(obs$user_id == names(this_user_N))
+  length(j);
+  #if(i == 5){j = j[1915:2579];this_user_N = length(j)}
+  #if(i == 54){j = j[1472:3869];this_user_N = length(j)}
+  #if(i == 60){j = j[1537:2449];this_user_N = length(j)}
+  #length(j)
+  this_user_obsdata = list(N = this_user_N, x = obsdata$x[j,])
+  class(this_user_obsdata) = "hsmm.data"
+  
+  #this_user_smoothed_init = try(predict.hsmmspec(object = hsmm_init, newdata = this_user_obsdata, method = "smoothed", debug = FALSE))
+  object = hsmm_fitted; newdata = this_user_obsdata; method = "smoothed"; debug = FALSE
+  this_user_smoothed_fitted = try(predict.hsmm(object = object, newdata = newdata, method = method, debug = debug))
+  if(class(this_user_smoothed_fitted) == "try-error"){
+    this_user_p = matrix(0, nrow = this_user_N, ncol = hsmm$n_states)
+    this_user_s = rep(NA, this_user_N)
+  }else{
+    this_user_p = this_user_smoothed_fitted$p
+    this_user_s = this_user_smoothed_fitted$s
+    
+  }
+  smoothed_fitted$p[j,] = this_user_p
+  smoothed_fitted$s[j] = this_user_s
+}
+```
+
+
+
+
+
+
+```{r}
+          
+          observed = table(xx1,xx2)
+          expected = matrix(table(xx1), nrow = length(table(xx1)),ncol = length(table(xx2))) * 
+            matrix(table(xx2), nrow = length(table(xx1)),ncol = length(table(xx2)), byrow = TRUE) / length(j)
+          
+          p_val = (((observed - expected) ^2) / expected) %>% sum(., na.rm = TRUE) %>% 
+            pchisq(.,df = (length(table(xx1))-1)*(length(table(xx2))-1), lower.tail = FALSE)
+          cat(p_val, " // ",test$p.value,"\n")
+          
+
+```
+
+
+
+
+### Random forest for imputing missing variables in absence of information regarding the state
+
+
+#### Imputing missing data of the combined dataset
+
+
+We will impute the missing data of the combined dataset (the part coming from the actual observations that had manual labels) using the initial  emission probabilities that we just computed
+
+```{r imputation for the combined dataset}
+
+combined_obs_imputed = impute_from_parem(obs = combined_obs %>% mutate(state = match(state_abbr, hsmm$states$abbr)), 
+                                         obs_names = hsmm$obs_names, n_states = hsmm$n_states, parem = hsmm$emission_par) %>% 
+  mutate(state_abbr = factor(state_abbr , levels = hsmm$states$abbr)) %>% 
+  select(-state)
+
+```
+
+
+#### Getting the RF models 
+
+note: I also tried glm but the results were not as good as with RF
+
+```{r random forest model for data imputation}
+
+obs4imp = combined_obs_imputed
+sapply(obs4imp, class)
+obs4imp = obs4imp %>% 
+  mutate(LH = as.factor(LH),
+         preg = as.factor(preg))
+
+
+imputation_models = foreach(o = hsmm$obs_names, .combine = c) %do% {
+  
+  cat(o, "\n")
+  
+  formula_str = str_c(o, " ~ ",str_c(setdiff(hsmm$obs_names, o),collapse = " + "))
+  
+  this_obs_model = randomForest(formula = as.formula(formula_str), data = obs4imp)
+  
+  if(class(obs4imp[,o] %>% unlist()) == "factor"){
+    ti = table(predicted = this_obs_model$predicted, imputed =  obs4imp[,o] %>% unlist())
+    print(ti)
+    ta = table(predicted = this_obs_model$predicted, actual =  combined_obs[,o] %>% unlist())
+    print(ta)
+  }else{
+    plot(this_obs_model$predicted, obs4imp[,o] %>% unlist(), 
+         pch = 16, col = rgb(0,0,0,0.1), main = o) %>% print()
+    corr = cor(this_obs_model$predicted, obs4imp[,o] %>% unlist())
+    cat("\t",corr, "\n")
+  }
+  
+  res = list(this_obs_model)
+  names(res) = o
+  
+  return(res)
+}
+
+hsmm$obs_imputation_models = imputation_models
+
+```
+
+
+
+### logistic regression for data imputation
+
+```{r}
+
+obs4imp = labeled_obs_imputed
+sapply(obs4imp, class)
+obs4imp = obs4imp %>% 
+  mutate(LH = as.factor(LH),
+         preg = as.factor(preg))
+
+imputation_glm_model = foreach(o = hsmm$obs_names, .combine = c) %do% {
+  
+  cat(o, "\n")
+  
+  formula_str = str_c(o, " ~ ",str_c(setdiff(hsmm$obs_names, o),collapse = " + "))
+  if(class(obs4imp[1,o] %>% unlist()) == "factor"){family = "binomial"}else{family = "gaussian"}
+  
+  this_obs_model = glm(formula = as.formula(formula_str), data = obs4imp, family = family)
+  
+  if(class(obs4imp[,o] %>% unlist()) == "factor"){
+    ti = table(predicted = round(this_obs_model$fitted.values), imputed =  obs4imp[,o] %>% unlist())
+    print(ti)
+    ta = table(predicted = round(this_obs_model$fitted.values), actual =  labeled_obs[,o] %>% unlist())
+    print(ta)
+  }else{
+    plot(this_obs_model$fitted.values, obs4imp[,o] %>% unlist(), 
+         pch = 16, col = rgb(0,0,0,0.01), main = o) %>% print()
+    corr = cor(this_obs_model$fitted.values, obs4imp[,o] %>% unlist())
+    cat("\t",corr, "\n")
+  }
+  
+  res = list(this_obs_model)
+  names(res) = o
+  
+  return(res)
+}
+
+hsmm$obs_imputation_models = models
+
+```
+
+
+
+```{r}
+
+  
+
+  p = sapply(1:hsmm$n_states, 
+             function(state) hsmm_init$dens.emission(obs = this_user_obsdata$x,state = state, 
+                                                     parem = hsmm_init$parms.emission, w = hsmm_init$weights[state,]))
+  
+  ww = rowSums(!is.na(this_user_obsdata$x))/ncol(this_user_obsdata$x)
+  p = ww * p
+  
+  prob_point = 2020
+  par(mfrow = c(2,1))
+  matplot(this_user_obsdata$x, type = "l")
+  abline(v = prob_point)
+  matplot(p, type = "l", col = hsmm$states$colors, lty = 1) 
+  abline(v = prob_point)
+  
+  par(mfrow = c(2,1))
+  jjj = max(1,(prob_point-300)):min(length(j),(prob_point+300))
+  matplot(jjj, this_user_obsdata$x[jjj,], type = "l")
+  abline(v = prob_point)
+  matplot(jjj, p[jjj,], type = "l", col = hsmm$states$colors, lty = 1) 
+  abline(v = prob_point)
+  
+  
+  best_obs = sapply(1:hsmm$n_obs, 
+                    function(o) 
+                      sapply(1:hsmm$n_states, 
+                             function(state) most_probable_value(par = hsmm_init$parms.emission[[o]], state = state)
+                             )
+                    )
+  p_best = sapply(1:hsmm$n_states, 
+             function(state) hsmm_init$dens.emission(obs = best_obs,state = state, 
+                                                     parem = hsmm_init$parms.emission, w = hsmm_init$weights[state,]))
+  
+  matplot(p_best, type = "l", col =  hsmm$states$colors, lty = 1)
+  apply(p_best, 2, which.max)
+  p_max = apply(p_best, 2, max)
+  p_min = apply(p_best, 2, min)
+  par(mfrow = c(2,1))
+  jjj = 500:1500
+  matplot(p[jjj,], type = "l", col = hsmm$states$colors, lty = 1) 
+  matplot(t(t(p)/p_max)[jjj,], type = "l", col = hsmm$states$colors, lty = 1) 
+
+  
+  
+```
+
+
+
+```{r}
+
+# smoothed_states_init = read_feather(path = paste0(folder,"smoothed_states_init.feather"))
+
+weights_decoded = obs_mat %>% as.data.frame() %>% 
+  dplyr::mutate(decoded_states = hsmm$states$abbr[smoothed_states_init$state_num] %>% factor(., levels = hsmm$states$abbr)) %>% 
+  group_by(decoded_states) %>% 
+  dplyr::summarise_each(funs = function(x){sum(!is.na(x))}) 
+
+weights_decoded_tmp = weights_decoded %>% dplyr::select(-decoded_states)
+weights_decoded_norm = (weights_decoded_tmp/rowSums(weights_decoded_tmp)) %>% set_rownames(hsmm$states$abbr) %>%  as.matrix()
+
+
+weights_manuals = obs_mat %>% as.data.frame() %>% 
+  dplyr::mutate(manual_labels_states = smoothed_states_init$manual_label_state_abbr %>% factor(., levels = hsmm$states$abbr)) %>% 
+  dplyr::filter(!is.na(manual_labels_states)) %>% 
+  group_by(manual_labels_states) %>% 
+  dplyr::summarise_each(funs = function(x){sum(!is.na(x))}) 
+
+weights_manuals_tmp = weights_manuals %>% dplyr::select(-manual_labels_states)
+weights_manuals_norm = (weights_manuals_tmp/rowSums(weights_manuals_tmp)) %>% set_rownames(hsmm$states$abbr) %>%  as.matrix()
+
+
+initial_weights = hsmm$weights/rowSums(hsmm$weights)
+
+molten_weights = melt(initial_weights)
+colnames(molten_weights) = c("state","variable","weight")
+molten_weights$state = factor(molten_weights$state, levels = hsmm$states$abbr)
+molten_weights$variable = factor(molten_weights$variable, levels = rev(hsmm$obs_names))
+
+
+molten_weights_decoded = melt(weights_decoded_norm)
+colnames(molten_weights_decoded) = c("state","variable","weight")
+molten_weights_decoded$state = factor(molten_weights_decoded$state, levels = hsmm$states$abbr)
+molten_weights_decoded$variable = factor(molten_weights_decoded$variable, levels = rev(hsmm$obs_names))
+
+molten_weights_manuals = melt(weights_manuals_norm)
+colnames(molten_weights_manuals) = c("state","variable","weight")
+molten_weights_manuals$state = factor(molten_weights_manuals$state, levels = hsmm$states$abbr)
+molten_weights_manuals$variable = factor(molten_weights_manuals$variable, levels = rev(hsmm$obs_names))
+
+
+ggplot(molten_weights, aes(x = state, y = variable, fill = weight))+
+  geom_tile()+
+  scale_fill_gradient(low = "papayawhip",high = "royalblue1")
+
+ggplot(molten_weights_decoded, aes(x = state, y = variable, fill = weight))+
+  geom_tile()+
+  scale_fill_gradient(low = "papayawhip",high = "royalblue1")
+
+
+ggplot(molten_weights_manuals, aes(x = state, y = variable, fill = weight))+
+  geom_tile()+
+  scale_fill_gradient(low = "papayawhip",high = "royalblue1")
+
+```
+
+
+```{r}
+matplot(p, type = "l", lty = 1)
+#matplot(t(w * t(p)), type = "l", lty = 2, add = TRUE)
+#matplot(p_o, type = "l",  lty = 2, add = TRUE)
+matplot(pp, type = "l",  lty = 3, add = TRUE, lwd = 2)
+
+matplot(p[,c(1,4,8)], type = "l", lty = 1, ylim = range(p[,c(1,4,8)], p_o[,c(1,4,8)], pp[,c(1,4,8)]))
+#matplot(t(w * t(p)), type = "l", lty = 2, add = TRUE)
+matplot(p_o[,c(1,4,8)], type = "l",  lty = 2, add = TRUE)
+matplot(pp[,c(1,4,8)], type = "l",  lty = 3, add = TRUE, lwd = 2)  
+
+ppp_1 = apply(p, 1, FUN = prod)
+ppp_o = apply(p_o, 1, FUN = prod)
+ppp = apply(pp, 1, FUN = prod)
+plot(ppp, type = "l", col = "green3", ylim = range(ppp, ppp_1))
+points(ppp_1, type = "l", col = "blue")
+```
+
+
+
+
 ```{r eval = FALSE}
 
 d = days %>%  dplyr::filter(user_id == unique(obs_full$user_id)[1])
@@ -23,6 +2456,120 @@ plot_user_history(d = d, obs = this_user_obs)
 
 ```
 
+
+
+```{r initial model - weight of each variable in each state}
+
+# We only run this on user's time-series that have at least some other logs besides bleeding.
+
+user_ids = users %>% 
+  dplyr::filter(n_temp + n_mucus + n_LH_test + n_preg_test >= (obs_duration * 0.25)) %>% 
+  select(user_id) %>% unlist()
+names(user_ids) = NULL
+
+j = which(smoothed_states_init$user_id %in% user_ids)
+ref_df = smoothed_states_init[j,] %>% select(user_id, rel_date, state_num)
+
+obsdata_for_missing_var = obsdata
+obsdata_for_missing_var$x = obsdata_for_missing_var$x[j,]
+obsdata_for_missing_var$N = rle(ref_df$user_id)$lengths; names(obsdata_for_missing_var$N ) = rle(ref_df$user_id)$values
+
+decoding_missing_var = foreach(v = hsmm$obs_names, .combine = bind_rows) %do% {
+  cat(v, "\n")
+  data_no_v = obsdata_for_missing_var
+  data_no_v$x[,which(hsmm$obs_names == v)] = NA
+  
+  tic()
+  this_df_v = foreach(user = user_ids,.combine = bind_rows) %do% {
+    #cat(user, "\n")
+    data_no_v_this_user = data_no_v
+    data_no_v_this_user$x = data_no_v$x[which(ref_df$user_id == user),]
+    data_no_v_this_user$N = nrow(data_no_v_this_user$x)
+    
+    this_smoothed_init = try(predict.hsmmspec(object = hsmm_init, newdata = data_no_v_this_user, method = "smoothed", debug = FALSE))
+    
+    if(class(this_smoothed_init) != "try-error"){
+      this_df = data.frame(user_id = user, 
+                           rel_date = 1:data_no_v_this_user$N,
+                           missing_variable = v,
+                           state_num = this_smoothed_init$s,
+                           state_abbr = hsmm$states$abbr[this_smoothed_init$s],
+                           stringsAsFactors = FALSE)
+    }else{df = data.frame()}
+    return(this_df)
+  }
+  toc()
+  
+  return(this_df_v)
+}
+
+write_feather(decoding_missing_var, path = str_c(folder, "decoding_missing_var.feather"))
+
+```
+
+
+```{r initial model - weight of each variable in each state - formatting}
+
+decoding_missing_var = read_feather(path = str_c(folder, "decoding_missing_var.feather"))
+
+tmp = left_join(decoding_missing_var, 
+                manual_labels %>% dplyr::select(user_id, rel_date, state_abbr) %>%  dplyr::rename(state_abbr_manual_label = state_abbr),
+                by = c("user_id", "rel_date"))
+
+tmp = left_join(tmp, 
+                smoothed_states_init %>%  
+                  dplyr::mutate(state_abbr_smoothed_original = hsmm$states$abbr[state_num]) %>% 
+                  dplyr::select(user_id, rel_date, state_abbr_smoothed_original),
+                by = c("user_id", "rel_date"))
+
+tmp = tmp %>% 
+  mutate(correct_decoding = (state_abbr == state_abbr_manual_label),
+         correct_decoding_smoothed_original = (state_abbr_smoothed_original == state_abbr_manual_label),
+         changed_decoding = (state_abbr != state_abbr_smoothed_original))
+
+decoding_missing_var = tmp
+
+decoding_missing_var = decoding_missing_var %>% 
+  mutate(missing_variable = factor(missing_variable, levels = hsmm$obs_names))
+
+```
+
+
+```{r initial model - weight of each variable in each state - visualization}
+
+accuracy_loss = decoding_missing_var %>% 
+  group_by(missing_variable, state_abbr_manual_label) %>% 
+  summarise(accuracy = mean(correct_decoding, na.rm = TRUE),
+            accuracy_smoothed_original = mean(correct_decoding_smoothed_original, na.rm = TRUE)) %>% 
+  mutate(color = hsmm$states$colors[match(state_abbr_manual_label, hsmm$states$abbr)],
+         state_abbr_manual_label = factor(state_abbr_manual_label, levels = hsmm$states$abbr))
+accuracy_loss
+
+ggplot(accuracy_loss, aes(x = state_abbr_manual_label, col = color)) +
+  geom_point(aes(y = accuracy_smoothed_original), size = 2, col = "gray") +
+  #geom_point(aes(y = accuracy)) +
+  geom_segment(aes(xend = state_abbr_manual_label, y = accuracy_smoothed_original, yend = accuracy), 
+               arrow = arrow(ends = "last",type = "closed", angle = 45, length = unit(4, "pt")))+
+  scale_color_identity()+
+  facet_grid(missing_variable ~ .)
+
+#####
+
+decoding_change = decoding_missing_var %>% 
+  group_by(missing_variable, state_abbr_smoothed_original) %>% 
+  summarise(fraction_changed = mean(changed_decoding, na.rm = TRUE)) %>% 
+  mutate(color = hsmm$states$colors[match(state_abbr_smoothed_original, hsmm$states$abbr)],
+         state_abbr_smoothed_original = factor(state_abbr_smoothed_original, levels = hsmm$states$abbr))
+decoding_change
+
+ggplot(decoding_change, aes(x = state_abbr_smoothed_original, col = color)) +
+  geom_segment(aes(xend = state_abbr_smoothed_original, 
+                   y = 0, yend = fraction_changed), 
+               arrow = arrow(ends = "last",type = "closed", angle = 45, length = unit(4, "pt")))+
+  scale_color_identity()+
+  facet_grid(missing_variable ~ .)
+
+```
 
 
 
