@@ -123,12 +123,21 @@ Decoding accuracy on the modified data with the fitted model: `r mean(vit_fit$st
 
 ```{r within-state-dep-join-em, fig.height=6, fig.width=6, out.width='60%', fig.cap="Joint emission probability densities per state and model (normalized densities)."}
 
-b_original = m$b %>% filter(!is.na(var1), !is.na(var2)) %>% pivot_longer(col = starts_with("p_"), names_to = "state", values_to = "prob", names_prefix = "p_")
-b_fit = model_fit$model$b %>% filter(!is.na(var1), !is.na(var2))%>% pivot_longer(col = starts_with("p_"), names_to = "state", values_to = "prob", names_prefix = "p_")
+b_original = m$b %>% filter(!is.na(var1), !is.na(var2)) %>% 
+  pivot_longer(col = starts_with("p_"), 
+               names_to = "state", values_to = "prob", 
+               names_prefix = "p_")
+
+b_fit = model_fit$model$b %>% filter(!is.na(var1), !is.na(var2))%>% 
+  pivot_longer(col = starts_with("p_"), 
+               names_to = "state", values_to = "prob", 
+               names_prefix = "p_")
 
 b = bind_rows(
-  b_original %>% mutate(model = "specified") %>% group_by(state) %>% mutate(rel_prob = prob/max(prob)),
-  b_fit %>% mutate(model = "fitted") %>% group_by(state) %>% mutate(rel_prob = prob/max(prob))
+  b_original %>% mutate(model = "specified") %>% group_by(state) %>% 
+    mutate(rel_prob = prob/max(prob)),
+  b_fit %>% mutate(model = "fitted") %>% group_by(state) %>% 
+    mutate(rel_prob = prob/max(prob))
 ) %>%  
   mutate(model = model %>% factor(., levels = c("specified","fitted"))) %>% 
   ungroup()

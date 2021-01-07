@@ -86,7 +86,7 @@ plot_hsmm_transitions(model = T_hsmm, label_color = "white")
 
 
 
-```{r T-hsmm-sim-viz, fig.width=12, fig.height=3, fig.cap="Simulated sequence with the T-hsmm."}
+```{r T-hsmm-sim-viz, fig.width=12, fig.height=4, fig.cap="Simulated sequence with the T-hsmm."}
 
 Ti_sim = simulate_hsmm(model = T_hsmm, n_state_transitions = 7, seed = 2)
 plot_hsmm_seq(X = Ti_sim, model = T_hsmm, add_state_color_legend = TRUE)

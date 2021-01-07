@@ -42,38 +42,65 @@ RES = read_feather("../Data/decodings/RES_synthetic_data.feather")
 
 ```{r perf-format-synth-data}
 
-XP = full_join(RES, X %>%  select(seq_id, t, state, tracking_category, alpha) %>% rename(state_GT = state), by = c("seq_id", "t"))
+XP = full_join(RES, X %>%  select(seq_id, t, state, tracking_category, alpha, alpha_level) %>%
+                 rename(state_GT = state), by = c("seq_id", "t"))
 
 ```
 
 
 __Overall accuracy__
 
+```{r perf-synth-XP}
+
+XP = 
+  XP %>% 
+  mutate(
+    tracking_category_str = 
+      case_when(tracking_category == "b" ~ "bleeding only",
+                tracking_category == "bp" ~ "bleeding & preg. tests",
+                tracking_category == "btm" ~ "bleeding, mucus & tº",
+                tracking_category == "full" ~ "all"
+      ) %>% 
+      factor(., levels = c("bleeding only","bleeding & preg. tests","bleeding, mucus & tº","all"))
+    )
+
+```
+
+
 
 ```{r perf-synth-accuracies}
 
-Accuracies = XP %>%  
-  group_by(alpha, tracking_category) %>% 
+Accuracies =  
+  XP %>% 
+  group_by(alpha, alpha_level, tracking_category_str) %>% 
   summarize(Accuracy = mean(state == state_GT, na.rm = TRUE),
             Weighted_Accuracy = weighted.mean(x = state == state_GT, w = prob, na.rm = TRUE),
             .groups = "drop") %>% 
-  pivot_longer(cols = c("Accuracy","Weighted_Accuracy"), names_to = "accuracy_type", values_to = "Accuracy") %>% 
+  pivot_longer(cols = c("Accuracy","Weighted_Accuracy"), 
+               names_to = "accuracy_type", values_to = "Accuracy") %>% 
   mutate(accuracy_type = accuracy_type %>%  str_replace(., "_"," "))
 
 ```
+
 
 
 ```{r perf-synth-accuracies-viz, echo = FALSE, fig.height=3, fig.width=8, fig.cap="Accuracy on synthetic data."}
 
 g_synth_acc = 
   ggplot(Accuracies, 
-       aes(x = factor(alpha, levels = sort(unique(alpha))) %>% as.numeric(), y = Accuracy, col = tracking_category)) + 
-  geom_vline(xintercept = 4, color = "gray") +
-  geom_point() + geom_line() + facet_grid(. ~ accuracy_type) + 
-  ylab("") + xlab(expression(alpha)) + 
-  scale_color_manual(name = "Tracking category", values = viridis_pal(direction = -1, option = "D")(4)) + 
-  scale_y_continuous(breaks = seq(0,1,by = 0.2)) +
-  scale_x_continuous(breaks = 1:length(unique(Accuracies$alpha)), labels = sort(unique(Accuracies$alpha)), minor_breaks = NULL)
+       aes(x = alpha, 
+           y = Accuracy, col = tracking_category_str)) + 
+  geom_point() + geom_line() + 
+  facet_grid(. ~ accuracy_type) + 
+  ylab("") + # xlab(expression(alpha)) + 
+  xlab("Tracking frequency") + 
+  scale_color_manual(name = "Groups of tracked features", 
+                     values = viridis_pal(direction = -1, option = "D")(4)) + 
+  scale_y_continuous(breaks = seq(0,1,by = 0.1), limits = c(0.5,1)) +
+  scale_x_continuous(breaks = unique(Accuracies$alpha), 
+                     labels = unique(Accuracies$alpha_level), 
+                     minor_breaks = NULL) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 
 g_synth_acc
 
@@ -86,13 +113,15 @@ __State-specific accuracy__
 
 ```{r perf-synth-state-accuracies}
 
-Accuracies_per_state = XP %>% group_by(alpha, tracking_category, state_GT) %>% 
+Accuracies_per_state = XP %>% 
+  group_by(alpha, alpha_level, tracking_category_str, state_GT) %>% 
   summarize(Accuracy = mean(state == state_GT, na.rm = TRUE),
             Weighted_Accuracy = weighted.mean(x = state == state_GT, w = prob, na.rm = TRUE),
             .groups = "drop") %>% 
   mutate(state_name = R_hsmm$state_names[state_GT] %>% factor(., levels = R_hsmm$state_names),
          state_col = R_hsmm$state_colors[state_GT]) %>% 
-  pivot_longer(cols = c("Accuracy","Weighted_Accuracy"), names_to = "accuracy_type", values_to = "accuracy") %>% 
+  pivot_longer(cols = c("Accuracy","Weighted_Accuracy"), 
+               names_to = "accuracy_type", values_to = "accuracy") %>% 
   mutate(accuracy_type = accuracy_type %>%  str_replace(., "_"," "))
 
 ```
@@ -101,7 +130,8 @@ Accuracies_per_state = XP %>% group_by(alpha, tracking_category, state_GT) %>%
 
 g_synth_acc_per_state = 
   ggplot(Accuracies_per_state %>% filter(state_name %in% c("M", "O", "P", "L", "B")) , 
-       aes(x = factor(alpha, levels = unique(alpha)) %>%  as.numeric(), y = accuracy, col = tracking_category)) +
+       aes(x = factor(alpha, levels = unique(alpha)) %>%  as.numeric(), 
+           y = accuracy, col = tracking_category_str)) +
   geom_vline(xintercept = 4, color = "gray") +
   geom_point() + geom_line() + 
   facet_grid(state_name ~ accuracy_type) + 
@@ -119,18 +149,22 @@ save(g_synth_acc_per_state, file = "../Data/plots/g_synth_acc_per_state.Rdata")
 
 ```
 
-```{r perf-synth-state-accuracies-viz-2, echo = FALSE, fig.height=5, fig.width=6, fig.cap="Per state accuracy on synthetic data."}
+```{r perf-synth-state-accuracies-viz-2, echo = FALSE, fig.height=4, fig.width=6, fig.cap="Per state accuracy on synthetic data."}
 
 g_synth_acc_per_state2 = 
-  ggplot(Accuracies_per_state %>% filter(state_name %in% c("M", "O", "P", "B"), accuracy_type == "Weighted Accuracy") , 
-       aes(x = factor(alpha, levels = unique(alpha)) %>%  as.numeric(), y = accuracy, col = tracking_category)) +
-  geom_vline(xintercept = 4, color = "gray") +
+  ggplot(Accuracies_per_state %>% 
+           filter(state_name %in% c("M", "O", "P", "B"), 
+                  accuracy_type == "Weighted Accuracy") , 
+       aes(x = alpha, 
+           y = accuracy, col = tracking_category_str)) +
   geom_point() + geom_line() + 
   facet_grid(. ~ state_name) + 
-  ylab("") + xlab(expression(alpha)) + 
-  scale_color_manual(name = "Tracking category", values = viridis_pal(direction = -1, option = "D")(4)) + 
+  ylab("") + xlab("Tracking frequency") + 
+  scale_color_manual(name = "Groups of tracked features", values = viridis_pal(direction = -1, option = "D")(4)) + 
   scale_y_continuous(breaks = seq(0,1,by = 0.2)) +
-  scale_x_continuous(breaks = 1:length(unique(Accuracies$alpha)), labels = sort(unique(Accuracies$alpha)), minor_breaks = NULL)
+  scale_x_continuous(breaks = unique(Accuracies_per_state$alpha), 
+                     labels = unique(Accuracies_per_state$alpha_level), minor_breaks = NULL) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 
 g_synth_acc_per_state2
 
@@ -148,11 +182,11 @@ __Confusion matrices__
 
 confusion_matrix_df = XP %>% 
   filter(!is.na(state)) %>% 
-  group_by(alpha, tracking_category, state_GT, state) %>% 
+  group_by(alpha, alpha_level, tracking_category, state_GT, state) %>% 
   summarize(n = n(),
             wn = sum(prob),
             .groups = "drop") %>% 
-  group_by(alpha, tracking_category, state_GT) %>% 
+  group_by(alpha, alpha_level, tracking_category, state_GT) %>% 
   mutate(tot = sum(n),
          wtot = sum(wn),
          .groups = "drop") %>% 
@@ -174,7 +208,7 @@ g_synth_conf_mat =
        aes(x = decoded_state_name, y = GT_state_name, fill = fraction))+
   geom_tile()+
   scale_y_discrete(drop = FALSE) +
-  facet_grid(tracking_category ~ alpha) +
+  facet_grid(tracking_category ~ alpha_level) +
   scale_fill_gradient(low = "white", high = "steelblue4", limits = c(0,1)) +
   coord_fixed() +
   ylab("Simulated states (ground truth)") + xlab("Decoded states") +
@@ -256,7 +290,10 @@ confusion_matrix_df = XP %>%
 
 ```{r perf-real-conf-mat-viz, fig.width=10, fig.height=4.5, fig.cap="Confusion matrix between manually labelled and decoded states."}
 
-g_conf_mat = ggplot(confusion_matrix_df, aes(x = decoded_state_name, y = GT_state_name, fill = fraction)) +
+g_conf_mat = 
+  ggplot(
+    confusion_matrix_df, 
+    aes(x = decoded_state_name, y = GT_state_name, fill = fraction)) +
   geom_tile() + 
   facet_grid(. ~ type) +
   scale_fill_gradient("State-specific accuracy", low = "white", high = "steelblue4", limits = c(0,1)) +
@@ -288,7 +325,7 @@ ordered_sequences =
   ) %>% 
   arrange(-n_wrong)
 
-for(i in 1:10){ # nrow(ordered_sequences) # length(unique(RES$seq_id))
+for(i in 1:nrow(ordered_sequences)){ # nrow(ordered_sequences) # length(unique(RES$seq_id))
   uid = ordered_sequences$seq_id[i]  # unique(RES$seq_id)[i]
   this_user_XP = XP %>% filter(seq_id == uid) %>% 
     rename(state_decoded = state,

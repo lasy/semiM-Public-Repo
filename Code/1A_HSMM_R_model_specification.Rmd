@@ -144,7 +144,7 @@ kable(
   data.frame(state = R_model$states$abbr, pi = R_model$init %>%  round(.,2)) %>% t() %>% set_rownames(NULL)  ,
   format = "latex",
   booktabs = T, 
-  caption = "Initial probabilities for each state of the HSMM of reproductive events."
+  caption = "Specified values of the initial probabilities for each state of the HSMM of reproductive events."
 ) %>% 
   kable_styling(full_width = T, latex_options = c("hold_position", "scale_down")) 
 
@@ -220,7 +220,7 @@ round(R_model$trans, 2) %>%
   kable(., 
         format = "latex",
         booktabs = T, 
-        caption = "Transition probabilities between states of the HSMM of reproductive events.")%>% 
+        caption = "Specified values of the transition probabilities between states of the HSMM of reproductive events.") %>% 
   kable_styling(full_width = T, latex_options = c("hold_position")) 
 
 ```
@@ -261,7 +261,7 @@ R_model$states$l =
 The `HiddenSemiMarkov` package allows to describe sojourns distributions as parametric distributions or non-parametric distributions. If described as parametric distributions, the distribution parameters are re-estimated at each M-step of the EM procedure when fitting the model to data, ensuring that the sojourn distributions keep following the specified parametric distribution. When specified as non-parametric distribution, the shape of the distribution is unconstrained.
 In both case, the initial sojourn distribution can also be used as a prior when updating the distributions in the EM-procedure if this option is selected when specifying a model.
 
-The initial (and prior) sojourn distributions of each state are specified to reflect as fairly as possible existing knowledge about these different biological states. Below, we provide references for distributions from the medical literature and from previous papers using similar data.
+The initial (and prior) sojourn distributions of each state are specified to reflect as fairly as possible existing knowledge about these different biological states. Below, we provide references for distributions from the medical literature and from previous papers using similar data. These distributions are displayed visually in Figure \@ref(fig:R-model-sojourn-viz).
 
 
 Menses have a typical duration between 2 and 8 days.[@Fraser2011] The early follicular phase is characterized by low, slowly increasing, estradiol levels and medium-high FSH levels. This is the most variable phase of the menstrual cycle and has a typical duration between 3 and 8 days.[@Munro1991] In the late follicular phase, estradiol levels are rising sharply, FSH levels are decreasing. This phase last 2-5 days.[@Munro1991]. The sojourn of "pre-O" is arbitrarily fixed to 1 day. This state is specified distinct from the late follicular phase between the probability of a positive LH test differs between these two states.
@@ -377,37 +377,6 @@ rm(x, Nd, M_gammafit, lE_gammafit, hE_gammafit, lut_gammafit, FAM_agg_sojourn, o
 
 ```
 
-```{r R-model-sojourn-viz, echo = FALSE, fig.width=6, fig.height=4, fig.cap="Sojourn distributions of the HSMM of reproductive events."}
-
-sojourn = as.data.frame(t(R_model$sojourn))
-colnames(sojourn) = R_model$states$abbr
-sojourn$day = 1:nrow(sojourn)
-sojourn_long = pivot_longer(sojourn, cols = -day, names_to = "State", values_to = "d")
-
-sojourn_long = sojourn_long %>% mutate(
-  color = R_model$states$colors[match(State, R_model$states$abbr)],
-  group = R_model$states$group_sojourn_time_scale[match(State,R_model$states$abbr)]  %>% str_c(.," states") %>% 
-    factor(.,levels = unique(R_model$states$group_sojourn_time_scale) %>% str_c(.," states")) 
-) %>% arrange(group, State) %>% mutate(color = factor(color, levels = unique(color)))
-
-g = ggplot(sojourn_long %>%  dplyr::filter(d > 1/2000, !(group == "- states"),day <= 550),aes(x = day, y = d, fill = color, col = color))
-g = g + geom_area(position = "identity", alpha = 0.5)+
-  scale_color_identity()+scale_fill_identity()+ #"States",guide = "legend", labels = unique(g$data$State)
-  expand_limits(x = 0)+
-  ylab("pdf")+xlab("days")+
-  scale_x_continuous(breaks = 
-                       function(x){x = round(x); 
-                       if(x[2]< 63){by = 7};
-                       if(x[2] %in% 63:200){by = 30};
-                       if(x[2]> 200){by = 90};
-                       return(seq(0,x[2],by = by))})+
-  facet_wrap(group~., scale = "free", nrow = 4, dir = "h", strip.position = "top") 
-#+ theme(legend.position = "bottom", legend.key.size = unit(0.3,"line"), legend.direction = "vertical",legend.box.margin = margin(t = -20))
-g
-
-#ggsave(g, filename = str_c(IO$panels,"sojourn_distributions.pdf"),width = viz$full_width/4, height = viz$full_width/1.8, scale = 0.85)
-
-```
 
 
 
@@ -467,7 +436,7 @@ bleeding_probs[,c("O","Lut","Ano","P","PL","lEpL","PB1","PP")] = rare_spotting
 # adding the prob matrix to the em_parms
 em_parms$bleeding$params$probs = bleeding_probs
 
-rm(bleeding_probs, high_bleeding, rare_spotting, frequent_spotting, no_bleeding)
+rm(bleeding_probs, high_bleeding, rare_spotting, frequent_bleeding, no_bleeding)
 ```
 
 
@@ -731,21 +700,54 @@ plot_hsmm_transitions(model = R_hsmm)
 ```
 
 
-```{r R-model-marg-em-par-viz, fig.height=8, fig.width=5, fig.cap="Marginal emission probabilities of our reproductive events HSMM."}
+```{r R-model-sojourn-viz, echo = FALSE, fig.width=6, fig.height=4, fig.cap="Sojourn distributions of the HSMM of reproductive events."}
 
-plot_hsmm_marg_dist(model = R_hsmm)
+sojourn = as.data.frame(t(R_model$sojourn))
+colnames(sojourn) = R_model$states$abbr
+sojourn$day = 1:nrow(sojourn)
+sojourn_long = pivot_longer(sojourn, cols = -day, names_to = "State", values_to = "d")
+
+sojourn_long = sojourn_long %>% mutate(
+  color = R_model$states$colors[match(State, R_model$states$abbr)],
+  group = R_model$states$group_sojourn_time_scale[match(State,R_model$states$abbr)]  %>% str_c(.," states") %>% 
+    factor(.,levels = unique(R_model$states$group_sojourn_time_scale) %>% str_c(.," states")) 
+) %>% arrange(group, State) %>% mutate(color = factor(color, levels = unique(color)))
+
+g = ggplot(sojourn_long %>%  dplyr::filter(d > 1/2000, !(group == "- states"),day <= 550),aes(x = day, y = d, fill = color, col = color))
+g = g + geom_area(position = "identity", alpha = 0.5)+
+  scale_color_identity()+scale_fill_identity()+ #"States",guide = "legend", labels = unique(g$data$State)
+  expand_limits(x = 0)+
+  ylab("pdf")+xlab("days")+
+  scale_x_continuous(breaks = 
+                       function(x){x = round(x); 
+                       if(x[2]< 63){by = 7};
+                       if(x[2] %in% 63:200){by = 30};
+                       if(x[2]> 200){by = 90};
+                       return(seq(0,x[2],by = by))})+
+  facet_wrap(group~., scale = "free", nrow = 4, dir = "h", strip.position = "top") 
+#+ theme(legend.position = "bottom", legend.key.size = unit(0.3,"line"), legend.direction = "vertical",legend.box.margin = margin(t = -20))
+g
+
+#ggsave(g, filename = str_c(IO$panels,"sojourn_distributions.pdf"),width = viz$full_width/4, height = viz$full_width/1.8, scale = 0.85)
+
+```
+
+
+
+```{r R-model-marg-em-par-viz, fig.height=8, fig.width=5, fig.cap="Specified marginal emission probabilities of our reproductive events HSMM."}
+
+plot_hsmm_marg_dist(model = R_hsmm, show_missing_probs = TRUE)
 
 ```
 
 
 ### Simulate a sequence
 
-```{r R-model-simulated-seq, fig.width=12, fig.height=3, warning=FALSE}
+```{r R-model-simulated-seq, fig.width=12, fig.height=5, warning=FALSE, fig.cap= "Simulated state and observation sequence with the reproductive event HSMM."}
 
 X = simulate_hsmm(R_hsmm, seed = 22, n_state_transitions = 150)
 
 plot_hsmm_seq(X, model = R_hsmm)
-#plot_hsmm_seq(X, model = R_hsmm, compact_view = TRUE)
 
 
 ```

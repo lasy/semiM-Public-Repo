@@ -25,62 +25,147 @@ source("Scripts/00_setup.R")
 ## Synthetic data generation
 
 
-To generate synthetic data, we first define a number of users and some characteristics defining these fictive users such as their highest tracking frequency, controlled with a parameter $\alpha$, and menstrual characteristics such as the length and regularity of their follicular and luteal phases or the noise in their temperature measurements.
+To generate synthetic data for $N$ fictive users, we first define some key characteristics of these users. First, their highest tracking frequency is defined via a parameter $\alpha$. Then, we randomly sample their menstrual characteristics such as the length and regularity of their follicular and luteal phases or the noise in their temperature measurements from realistic priors.
 
-Because we want to evaluate the performance of our framework given different level of missing data in a realistic context, we define the effect of the parameter $\alpha$ on the missing probabilities as follow:
+### Simulating realistic tracking behavior
 
+Because we want to evaluate the performance of our framework given different level of missing data in a realistic context, we first define censoring probabilities for each state and variable that reflect the tracking behavior of a dedicated user whose purpose is to achieve or avoid pregnancy. A dedicated user would not track all the features every day but would instead systematically report the relevant features at the relevant moments of their cycle.
+For example, they would report ovulation test in the days leading and following ovulation, not during their menses.
 
-$$ q^*_{j,k} = q_{j,k} - \beta \ q_{j,k} + \beta \ \delta  $$
+Once these censoring probabilities are defined, we can modulate them with a parameter $\alpha$ reflecting that some users are less dedicated than others.
 
-where
+We specify realistic censoring probabilities of a dedicated user as follow:
 
-$q_{j,k}$ are realistic (expected in real-life data, see fig \@ref(fig:datasets-expected-missingness)) estimates of the missing probabilities with $q_{j,k} = P(X_k \text{ is missing}|S = j)$, $\beta = \| \frac{3^{\alpha} - 1}{3^{\alpha}+1} \|$ and $\delta = 0$ if $\alpha < 0$ and 1 otherwise.
+```{r datasets-dedicated-tracking}
 
-The parameter $\alpha$ takes values in $\mathbb{R}$. When $\alpha$ is zero, the missing probabilities are identical to the expected missing probabilities from a typical app users whose purpose is to identify their fertile window. When $\alpha$ is negative, the missing probabilities are smaller than the expected ones, when alpha is positive they are bigger. In the extreme cases, a value of $-\infty$ means that the variables are never missing and a value of $+\infty$ means that the variables are always missing. When $\alpha = -1$, $q^* = \frac{1}{2} q$: the variables are missing only about half the time they were expected to be missing. When $\alpha = 1$, variables are missing with a probability of at least 50%.
-
-
-__Expected missingness__
-
-```{r datasets-expected-missingness, echo = FALSE, results='hide', fig.height=3, fig.cap="Missing probabilities for each variable and state expected for a typical users whose tracking purpose is to identify their fertile window and detect pregnancies early on."}
 
 load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
 
-pj_mat = matrix(R_hsmm$censoring_probs$p, 
-                nrow = nrow(R_hsmm$censoring_probs$q), 
-                ncol = R_hsmm$J, 
-                byrow = TRUE)
-qjk = pj_mat + (1-pj_mat) * R_hsmm$censoring_probs$q
+p = R_hsmm$censoring_probs$p
+p_ = p
+p_[c("M")] = 0.01
+p_[c("lE","Lut","Ano","AB","P","L","lEpL")] = 0.05
+p_[c("hE","preO","O","postO")] = 0.025
+p_[c("PL","PB1","PP")] = 0.9
+p_[c("PB2","PB3","BF")] = 0.98
+p_[c("B")] = 0.2
 
-qjk_long = qjk %>% as.data.frame() %>% 
-  mutate(variable = rownames(qjk)) %>% 
-  pivot_longer(., -variable, names_to = "state_name", values_to = "q" ) %>% 
-  mutate(state_name = state_name %>% factor(., levels = R_hsmm$state_names), 
-         state = state_name %>% as.numeric(),
-         state_color = R_hsmm$state_colors[state])
-
-ggplot(qjk_long, aes(x = state_name, y = q, fill = state_color)) + geom_bar(stat = "identity") + facet_grid(variable ~ .) + ylim(c(0,1)) + scale_fill_identity()
+q = R_hsmm$censoring_probs$q
+q_ = q
+q_["LH", c("hE","preO","O","postO")] = c(0.3,0.1,0.1,0.1)
+q_["mucus", c("hE","preO","O","postO")] = 0.1
+q_["temp", c("hE","preO","O","postO","Ano")] = 0.1
+q_["temp", c("Lut","P")] = 0.3
+q_["temp", c("PL","PB1")] = 0.75
 
 ```
+
+
+```{r datasets-p-expected-table}
+
+p_ %>% t() %>% 
+  kable(., 
+        format = "latex", 
+        booktab = TRUE, 
+        caption = "Expected censoring probabilities p.") %>% 
+  kable_styling(full_width = T, latex_options = c("hold_position")) 
+
+```
+
+```{r datasets-q-expected-table}
+
+q_ %>% kable(., 
+        format = "latex", 
+        booktab = TRUE, 
+        caption = "Expected marginal censoring probabilities q.") %>% 
+  kable_styling(full_width = T, latex_options = c("hold_position")) 
+
+```
+
+
+
+We now modulate these probabilities with the parameter $\alpha$:
+
+```{r datasets-missing-probs}
+
+alpha_ref = c(0,0.8,1)
+alphas = seq(0,1,by = 1/5)
+alpha_levels = c("absent","rare","occasional","expected","diligent","persistent")
+
+missing_probs = 
+  map_dfr(
+    .x = 1:R_hsmm$J,
+    .f = function(state){
+      modulated_p = spline(x = alpha_ref, y = c(1,p_[state],0), method = "hyman", xout = alphas)
+      modulated_qs = 
+        map_dfr(
+          .x = R_hsmm$marg_em_probs %>% names(),
+          .f = function(var){
+            modulated_q = spline(x = alpha_ref, y = c(1,q_[var,state],0), method = "hyman", xout = alphas)
+            data.frame(variable = var,
+                       alpha = alphas,
+                       q = modulated_q$y)
+          }
+        )
+      missing_prob_this_state = 
+        left_join(
+          data.frame(state = state,
+                     alpha_level = alpha_levels,
+                     alpha = alphas,
+                     p =  modulated_p$y
+          ),
+          modulated_qs,
+          by = c("alpha")
+        )
+    }
+  )
+
+missing_probs = 
+  missing_probs %>% 
+  mutate(
+    q = ifelse(variable == "bleeding", 0, q), # bleeding is never missing if the app is open
+    missing_prob = p + (1-p)*q,
+    alpha_level = alpha_level %>% factor(., levels = alpha_levels),
+    state_name = R_hsmm$state_names[state] %>% factor(., levels = R_hsmm$state_names),
+    state_color = R_hsmm$state_colors[state])
+
+```
+
+
+```{r datasets-expected-missingness, echo = FALSE, results='hide', fig.height=9, fig.cap="Probabilities for a variable to be reported given different tracking behaviors."}
+
+ggplot(missing_probs,
+       aes(x = alpha_level, y = 1-missing_prob, fill = state_color)) +
+  geom_bar(stat = "identity") +
+  scale_fill_identity() +
+  ylab("Probability of being reported") +
+  xlab("Simulated tracking frequency") +
+  facet_grid(state_name ~ variable) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.text.y = element_text(angle = 0, hjust = 0))
+
+
+```
+
+
 
 __Synthetic users characteristics__
 
 ```{r datasets-synthetic-users}
 
-N_per_alpha = 30 
-alpha = rep(c(-Inf, -1, -0.5, 0, 0.5, 1, 2, 4), N_per_alpha)
-N_users = length(alpha)
+N_per_alpha = 50 
+N_users = (length(alpha_levels)-1) * N_per_alpha
 
 s_users = data.frame(
   seq_id = 1:N_users, 
-  alpha = alpha,
+  alpha = rep(alphas[-1], N_per_alpha),
+  alpha_level = rep(alpha_levels[-1],N_per_alpha),
   temp_sd = runif(N_users, min = 0.05, max = 0.3),
   mean_lE_sojourn = rnorm(N_users, mean = 10, sd = 3),
   sd_lE_sojourn = 0.2 + rpois(N_users, lambda = 2),
   mean_Lut_sojourn = rnorm(N_users, mean = 11, sd = 1),
   sd_Lut_sojourn = 0.2 + rpois(N_users, lambda = 0.75)
   )
-
-rm(alpha)
 
 ```
 
@@ -89,7 +174,7 @@ __Generating time-series__
 
 ```{r datasets-Xsim, warning=FALSE}
 
-# 139 sec for 64 time-series
+# 139 sec = 2+ min for 64 time-series
 Xsim = purrr::map_dfr(
   .x = s_users$seq_id,
   .f = function(sid){
@@ -97,11 +182,17 @@ Xsim = purrr::map_dfr(
     modified_hsmm = R_hsmm
     
     # modifying censoring probabilities
-    alpha = s_users$alpha[s_users$seq_id == sid]
-    beta = abs((3^alpha - 1)/(3^alpha + 1))
-    delta = ifelse(alpha > 0, 1, 0)
-    modified_hsmm$censoring_probs$p = 0 *modified_hsmm$censoring_probs$p
-    modified_hsmm$censoring_probs$q = qjk * (1 - beta) + beta * delta
+    this_user_alpha = s_users$alpha[s_users$seq_id == sid]
+    modified_hsmm$censoring_probs$p = 
+      missing_probs %>% filter(alpha == this_user_alpha) %>% 
+      select(state, p) %>% arrange(state) %>% 
+      distinct() %>% 
+      select(p) %>% unlist() 
+    modified_hsmm$censoring_probs$q = 
+      missing_probs %>% filter(alpha == this_user_alpha) %>% 
+      select(state, variable, q) %>% 
+      pivot_wider(id_cols = variable, names_from = state, values_from = q) %>% 
+      select(-variable) %>% as.matrix()
     
     # modifying emission distributions
     modified_hsmm$marg_em_probs$temp$params$sd = rep(s_users$temp_sd,R_hsmm$J)
@@ -128,7 +219,7 @@ Xsim = purrr::map_dfr(
 
 ```
 
-__Tracking behavior categories__
+__Altering the long-term tracking behavior of our fictive users__
 
 ```{r datasets-Xsim2}
 
@@ -151,12 +242,32 @@ write_feather(Xsim2, path = "../Data/synthetic_data/Xsim.feather")
 ```
 
 
-__Visualization of a synthetic time-series example__
+__Visualization of synthetic time-series examples__
+
+```{r datasets-selecting-examples-from-each-category}
+
+examples = Xsim2 %>% 
+  filter(alpha_level != "none") %>% 
+  select(seq_id, tracking_category, alpha_level) %>% 
+  group_by(seq_id, alpha_level) %>% 
+  summarize(has_full_tracking = sum(tracking_category == "full") >= 100, .groups = "drop") %>% 
+  filter(has_full_tracking) %>%
+  group_by(alpha_level) %>% 
+  slice_head(n = 1)
+  
+
+```
 
 
-```{r datasets-synthetic-example,fig.width=12, fig.height=3, fig.cap="Example of a synthetic time-series."}
+```{r datasets-synthetic-example,fig.width=12, fig.height=5, fig.cap="Examples of synthetic time-series."}
 
-plot_hsmm_seq(X = Xsim2 %>%  filter(seq_id == 4), model = R_hsmm)
+for(i in 1:nrow(examples)){
+  ex_id = examples$seq_id[i]
+  plot_hsmm_seq(X = Xsim2 %>%  filter(seq_id == ex_id), model = R_hsmm,
+                title = str_c(examples$alpha_level[i], " tracking")) %>% 
+    print()
+}
+
 
 ```
 
@@ -167,7 +278,8 @@ __Synthetic dataset characteristics__
 
 table(tracking_category = Xsim2$tracking_category)  %>% 
   kable(., format = "latex", booktabs = T, 
-        caption = "Number of data-point in each tracking category.")
+        caption = "Number of data-point in each tracking category.") %>% 
+  kable_styling(latex_options = c("hold_position")) 
 
 ```
 
@@ -181,6 +293,34 @@ table(seq_id = Xsim2$seq_id) %>%
   geom_histogram(bins = 50) + expand_limits(x = 0)
 
 ```
+
+```{r datasets-effective-tracking-frequency}
+
+tracking_freq_table_synth_data = 
+  Xsim2 %>% 
+  filter(tracking_category == "full") %>% 
+  group_by(alpha_level) %>% 
+  mutate(any_log = !is.na(bleeding) | !is.na(LH) | !is.na(preg) | !is.na(mucus) | !is.na(temp),
+         any_log = ifelse(!any_log,NA, 1)) %>% 
+  summarize(across(c(bleeding, LH, preg, mucus, temp, any_log), .fns = function(x) sum(!is.na(x))),
+            n = n(),
+            .groups = "drop") %>% 
+  mutate(Effective_tracking_frequency = (bleeding+LH+preg+mucus+temp)/5/n,
+         Frequency_of_opening_the_app = any_log/n) %>% 
+  select(alpha_level, Effective_tracking_frequency, Frequency_of_opening_the_app ) %>% 
+  mutate(alpha_level = alpha_level %>% factor(., levels = alpha_levels)) %>% 
+  arrange(alpha_level)
+
+tracking_freq_table_synth_data %>% 
+  rename(Tracking_category = alpha_level) %>% 
+  kable(.,
+        booktab = T,
+        digits = 2,
+        caption = "Effective tracking frequency (fraction of reported variables) and frequency of opening the app (at least one variable is logged at a given time-point) per simulated tracking behaviors.")
+
+```
+
+
 
 
 \newpage
@@ -230,5 +370,64 @@ write_feather(ML, path = paste0(IO$output_data, "ML.feather"))
 
 ```
 
+
+
+
+```{r datasets-kindara-characteristics-and-tracking-frequency}
+
+breaks_tracking_freq = c(0, tracking_freq_table_synth_data$Effective_tracking_frequency)
+breaks_tracking_freq = (breaks_tracking_freq + lag(breaks_tracking_freq))/2
+breaks_tracking_freq = c(0, breaks_tracking_freq[-1],1)
+
+
+breaks_app_open = c(0, tracking_freq_table_synth_data$Frequency_of_opening_the_app)
+breaks_app_open = (breaks_app_open + lag(breaks_app_open))/2
+breaks_app_open = c(0, breaks_app_open[-1],1)
+
+  
+users_tracking_freq_cat = 
+  X %>% 
+  group_by(seq_id) %>% 
+  mutate(any_log = !is.na(bleeding) | !is.na(LH) | !is.na(preg) | !is.na(mucus) | !is.na(temp),
+         any_log = ifelse(!any_log,NA, 1)) %>% 
+  summarize(across(c(bleeding, LH, preg, mucus, temp, any_log), .fns = function(x) sum(!is.na(x))),
+            n = n(),
+            .groups = "drop") %>% 
+  mutate(Effective_tracking_frequency = (bleeding+LH+preg+mucus+temp)/5/n,
+         Frequency_of_opening_the_app = any_log/n,
+         tracking_freq_cat = Effective_tracking_frequency %>% 
+           cut(breaks = breaks_tracking_freq,
+               labels = c("none",tracking_freq_table_synth_data$alpha_level %>% as.character())),
+         open_app_cat = Frequency_of_opening_the_app %>% 
+           cut(breaks = breaks_app_open,
+               labels = c("none",tracking_freq_table_synth_data$alpha_level %>% as.character()))
+           ) 
+
+
+users_tracking_freq_cat %>% 
+  group_by(tracking_freq_cat) %>% 
+  summarize(n = n(),
+            perc = n/length(unique(X$seq_id)) * 100,
+            .groups = "drop") %>% 
+  kable(.,
+        booktab = T,
+        digits = 0,
+        caption = "Number and percentage of users in our real-world dataset according to the tracking categories defined for our simulated data, based on the frequency with which they log features.")
+
+```
+```{r datasets-kindara-characteristics-and-tracking-frequency-2}
+
+
+users_tracking_freq_cat %>% 
+  group_by(open_app_cat) %>% 
+  summarize(n = n(),
+            perc = n/length(unique(X$seq_id)) * 100,
+            .groups = "drop") %>% 
+  kable(.,
+        booktab = T,
+        digits = 0,
+        caption = "Number and percentage of users in our real-world dataset according to the tracking categories defined for our simulated data, based on the frequency with which they open the app.")
+
+```
 
 

@@ -86,7 +86,8 @@ df = RES %>%
                str_c(c("b_tests","no_temp","no_mucus","full"), collapse = "|")),
     # filter for ovulatory cycles 
     state <= 7,
-    # filter for ovulatory cycles in which the state prob is not too low (i.e. there was enough data to estimate ovulation states)
+    # filter for ovulatory cycles in which the state prob is not too low 
+    # (i.e. there was enough data to estimate ovulation states)
     prob > 0.3
   ) %>% 
   # we look for consecutive cycles fulfilling the criteria
@@ -102,7 +103,8 @@ df = RES %>%
   ungroup() %>% 
   filter(t >= t_first_cycle_start, 
          t <= t_last_cycle_end) %>% 
-  # we ensure that we have enough cycles in a stretch and that the cycle lengths show some variability
+  # we ensure that we have enough cycles in a stretch and 
+  # that the cycle lengths show some variability
   group_by(seq_id, cons_stretch_id) %>% 
   mutate(n_cycles = length(unique(cycle_number)),
          cycle_length_diff = max(cycle_length) - min(cycle_length)) %>% 
@@ -204,7 +206,8 @@ cat("\n")
 J = 7
 marg_em_probs = R_hsmm$marg_em_probs
 for(var in names(marg_em_probs)){
-  if(marg_em_probs[[var]]$type == "non-par") marg_em_probs[[var]]$params$probs = marg_em_probs[[var]]$params$probs[,1:J]
+  if(marg_em_probs[[var]]$type == "non-par") 
+    marg_em_probs[[var]]$params$probs = marg_em_probs[[var]]$params$probs[,1:J]
   if(marg_em_probs[[var]]$type == "binom"){
     marg_em_probs[[var]]$params$size = marg_em_probs[[var]]$params$size[1:J]
     marg_em_probs[[var]]$params$prob = marg_em_probs[[var]]$params$prob[1:J]
@@ -300,7 +303,11 @@ if(!file.exists(pred_file)){
           ) %>% 
             group_by(i) %>% 
             summarize(cycle_length_from_last_transition = sum(sojourn), .groups = "drop") %>% 
-            mutate(cycle_length = cycle_length_from_last_transition + last_state_transition$t_last_transition - t_cycle_start) %>% 
+            mutate(cycle_length = 
+                     cycle_length_from_last_transition + 
+                     last_state_transition$t_last_transition - 
+                     t_cycle_start
+                   ) %>% 
             summarize(uncertainty = sd(cycle_length),
                       cycle_length = mean(cycle_length)) %>% 
             mutate(cycleday = cd, diff = cycle_length - this_output$cycle_length)
@@ -328,7 +335,8 @@ if(!file.exists(pred_file)){
 # ggplot(this_seq_pred, aes(x = cycleday_backward, y = diff, col = model)) +
 #   geom_hline(yintercept = 0, col = "black")+
 #   geom_line() +
-#   geom_ribbon(aes(ymin = diff - uncertainty, ymax = diff + uncertainty, fill = model), col = NA, alpha = 0.5)
+#   geom_ribbon(aes(ymin = diff - uncertainty, ymax = diff + uncertainty, fill = model), 
+# col = NA, alpha = 0.5)
 
 ```
 
@@ -336,7 +344,8 @@ if(!file.exists(pred_file)){
 
 ```{r predicting-results-HSMM, fig.cap="Distribution of the errors on the cycle length prediction from the HSMM simulations as one progresses through the cycles."}
 
-# ggplot(pred %>% filter(model == "HSMM", cycleday_backward >= -25), aes(x = cycleday_backward, y = diff, col = model, group = seq_id))+
+# ggplot(pred %>% filter(model == "HSMM", cycleday_backward >= -25), 
+# aes(x = cycleday_backward, y = diff, col = model, group = seq_id))+
 #   geom_line(alpha = 0.1) + geom_hline(yintercept = 0, linetype = 2)
 
 ggplot(pred %>% 

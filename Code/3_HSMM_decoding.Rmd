@@ -17,12 +17,15 @@ output:
 ```{r decoding-setup, include = FALSE, eval = TRUE, cache = FALSE}
 knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
 source("Scripts/00_setup.R")
+rerun_from_here = FALSE
 ```
 
 
 # Decoding time-series
 
 ## Decoding functions
+
+Functions are implemented in the file `Scripts/00_FAM_decoding_functions.R` which is available on the same github repository as this file.
 
 ```{r decoding-functions}
 source("Scripts/00_FAM_decoding_functions.R")
@@ -50,15 +53,16 @@ X = read_feather("../Data/synthetic_data/Xsim.feather")
 
 RES.file = "../Data/decodings/RES_synthetic_data.feather"
 
-if(!file.exists(RES.file)){
+if(rerun_from_here | !file.exists(RES.file)){
   
   RES = purrr::map_dfr(.x = unique(X$seq_id),
                        .f = function(sid){
-                         # cat(sid, "\n")
+                         # cat(sid, "\n")  # prints the subject IDs
                          get_most_likely_sequence_with_prob(
                            X = X %>% 
                              filter(seq_id == sid) %>% 
-                             select(-alpha, -state, -tracking_category),
+                             select(-alpha, -alpha_level, -state, -tracking_category,
+                                    -temp_sd, -mean_lE_sojourn, -sd_lE_sojourn, -mean_Lut_sojourn, -sd_Lut_sojourn),
                            verbose = FALSE
                          )
                        }
@@ -80,7 +84,7 @@ X = X %>% filter(seq_id %in% unique(ML$seq_id))
 
 RES.file = paste0(IO$output_data, "RES_app_data.feather")
 
-if(!file.exists(RES.file)){
+if(rerun_from_here | !file.exists(RES.file)){
   
   tic()
   RES = purrr::map_dfr(.x = unique(X$seq_id),

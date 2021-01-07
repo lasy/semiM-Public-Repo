@@ -1,0 +1,420 @@
+---
+title: "Figures"
+author: "Laura Symul"
+date: "12/9/2020"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(feather)
+library(magick)
+library(HiddenSemiMarkov)
+library(ggplot2)
+library(ggpubr)
+
+
+```
+
+
+```{r loading-actual-data, echo = FALSE}
+
+XP = read_feather(
+  path = "../../semiM-Data/Kindara/output_data/decoding_results_app_data.feather")
+
+```
+
+# Figure 1
+
+```{r fig1, fig.width = 12, fig.height = 6}
+
+# app log screen
+K_screen = image_read("../../semiM-Public-Repo/Figures_Tables_Media/Media/kindara_screen.png")
+
+K_screen_ratio = image_info(K_screen)$height / image_info(K_screen)$width 
+padding = 20
+
+g_app_screen = ggplot()+ 
+  coord_fixed(ratio = K_screen_ratio)+
+  background_image(K_screen)+
+  theme(plot.margin = margin(t=padding, l=padding, r=padding, b=padding, unit = "pt"))
+
+
+# time-series examples
+load("../../semiM-Public-Repo/Data/models/R_hsmm.Rdata")
+X = read_feather("../../semiM-Data/Kindara/output_data/processed_app_data.feather")
+
+selected_users = c("0ccf07c0da86d9fda79524c1e771df35b529ec7e", "ee6255ac9d3ef19f22750b1e8b3e7e42d2b5742c")
+
+plotlist = list()
+for(u in selected_users){
+  g_u = plot_hsmm_seq(X = X %>% filter(seq_id == u), 
+                      model = R_hsmm, 
+                      title = paste0("example user ",which(selected_users == u)),
+                      compact_view = TRUE, add_color_legend_in_compact_view = FALSE) 
+  plotlist[[u]] = g_u 
+}
+
+g_example = ggarrange(plotlist = plotlist, ncol = 1, nrow = 2)
+
+
+## Assembled figures
+
+fig1 = ggarrange(g_app_screen, g_example, ncol = 2, nrow = 1, widths = c(1,2), labels = "auto")
+fig1
+
+```
+
+
+# Table 1
+
+```{r}
+
+X = read_feather(path = "../../semiM-Data/Kindara/output_data/processed_app_data.feather")
+
+quantile5 = function(x) quantile(x, probs = 0.05)
+quantile25 = function(x) quantile(x, probs = 0.25)
+quantile75 = function(x) quantile(x, probs = 0.75)
+quantile95 = function(x) quantile(x, probs = 0.95)
+
+
+table_missing_data = 
+  X %>%  group_by(seq_id) %>% 
+  summarize(tot = n(),
+            days_with_log = sum(!is.na(bleeding)),
+            overall_tracking_frequency = days_with_log/tot, 
+            days_with_temp = sum(!is.na(temp)),
+            temp_tracking_frequency = days_with_temp/tot,
+            days_with_mucus = sum(!is.na(mucus)),
+            mucus_tracking_frequency = days_with_mucus/tot,
+            days_with_LH = sum(!is.na(LH)),
+            LH_test_tracking_frequency = days_with_LH/tot,
+            days_with_preg = sum(!is.na(preg)),
+            pregnancy_test_tracking_frequency = days_with_preg/tot,
+            .groups = "drop") %>% 
+  summarize(across(ends_with("tracking_frequency"), list(mean = mean, median = median, min = min, `5th percentile` = quantile5, `95th percentile` = quantile95, max = max), .names = "{col}.{fn}")) %>% 
+  pivot_longer(., cols = everything(), names_to = c("metric",".value"), names_sep = "\\.") %>% 
+  mutate(metric = metric %>% str_replace_all(.,"_"," ") %>% str_to_sentence(.) %>% str_replace(.,"Lh","LH"))
+
+table_missing_data = table_missing_data %>% 
+  bind_rows(., 
+            
+            X %>% group_by(seq_id) %>% 
+              mutate(is_tracking = !is.na(bleeding),
+                     tracking_stretch_id = cumsum((is_tracking != lag(is_tracking)) %>% replace_na(FALSE))) %>% 
+              group_by(seq_id, tracking_stretch_id, is_tracking) %>% 
+              summarize(n = n(), .groups = "drop") %>% 
+              group_by(seq_id, is_tracking) %>% 
+              summarize(N = max(n), .groups = "drop") %>% 
+              group_by(is_tracking) %>% 
+              summarize(
+                across(
+                  N, 
+                  list(mean = mean, median = median,  min = min, `5th percentile` = quantile5, `95th percentile` = quantile95, max = max), 
+                  .names = "{fn}"), 
+                .groups = "drop") %>% 
+              mutate(metric = ifelse(is_tracking, "Longest consecutive tracking (days)", "Longest consecutive missing (days)")) %>% 
+              select(-is_tracking) 
+            
+  )
+
+table_missing_data
+
+save(table_missing_data, 
+     file = "../Figures_Tables_Media/Tables/Kindara/table_missing_data.Rdata")
+
+```
+
+
+# Figure 2
+
+```{r fig2, fig.width=9, fig.height=9}
+
+# Tracking model
+
+tracking_model = image_read("../Figures_Tables_Media/Media/tracking_model-01.png")
+
+tracking_model_ratio = image_info(tracking_model)$height / image_info(tracking_model)$width 
+padding = 20
+
+g_tm = ggplot()+ coord_fixed(ratio = tracking_model_ratio)+
+  background_image(tracking_model)+theme(plot.margin = margin(t=padding, l=padding, r=padding, b=padding, unit = "pt"))
+
+# R_hsmm graph
+
+
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+load("../Data/models/R_model.Rdata", verbose = TRUE)
+
+g_model_graph = plot_hsmm_transitions(model = R_hsmm, size = 10) + theme(aspect.ratio = NULL) 
+
+# R_hsmm sojourn
+
+sojourn = as.data.frame(t(R_model$sojourn))
+colnames(sojourn) = R_model$states$abbr
+sojourn$day = 1:nrow(sojourn)
+sojourn_long = pivot_longer(sojourn, cols = -day, names_to = "State", values_to = "d")
+
+sojourn_long = sojourn_long %>% 
+  mutate(
+    color = R_model$states$colors[match(State, R_model$states$abbr)],
+    group = R_model$states$group_sojourn_time_scale[match(State,R_model$states$abbr)]  %>% str_c(.," states") %>% 
+      factor(.,levels = unique(R_model$states$group_sojourn_time_scale) %>% str_c(.," states")) 
+  ) %>% arrange(group, State) %>% 
+  mutate(color = factor(color, levels = unique(color)),
+         State = factor(State, levels = R_model$states$abbr))
+
+g_sojourn_1 = ggplot(sojourn_long %>% filter(State %in% c("M","lE","hE","Lut", "Ano", "P"), day < 30), aes(x = day, y = d, fill = color, col = color))+
+  geom_area(position = "identity", alpha = 0.5)+
+  scale_color_identity() + scale_fill_identity() +
+  expand_limits(x = 0) +
+  scale_x_continuous(breaks = seq(0,28, by = 7), minor_breaks = NULL)+
+  ylab("pdf") + xlab("days")+
+  facet_grid(State ~ ., scale = "free") +
+  theme_set(theme_minimal()) +
+  theme(strip.background = element_rect(fill = "gray80", color = NA))
+
+
+g_sojourn_2 = ggplot(sojourn_long %>% filter(State %in% c("P","L", "B"), day < 30), aes(x = day, y = d, fill = color, col = color))+
+  geom_area(position = "identity", alpha = 0.5)+
+  scale_color_identity() + scale_fill_identity() +
+  expand_limits(x = 0) +
+  scale_x_continuous(breaks = seq(0,150, by = 7))+
+  ylab("pdf") + xlab("days")+
+  facet_grid(State ~ ., scale = "free") +
+  theme_set(theme_minimal())
+
+
+g_sojourn_3 = ggplot(
+  sojourn_long %>% 
+    filter(State %in% c("AB", "PL","PB3","B", "PP","BF"), day <= 150), 
+  aes(x = day/7, y = d, fill = color, col = color))+
+  geom_area(position = "identity", alpha = 0.5)+
+  scale_color_identity() + scale_fill_identity() +
+  expand_limits(x = 0) +
+  scale_x_continuous(breaks = seq(0,21, by = 2), minor_breaks = 0:21)+
+  ylab("pdf") + xlab("weeks")+
+  facet_grid(State ~ ., scale = "free") +
+  theme_set(theme_minimal()) +
+  theme(strip.background = element_rect(fill = "gray80", color = NA))
+
+g_sojourn = ggarrange(g_sojourn_1, g_sojourn_3, ncol = 2, nrow = 1, widths = c(1,1.4))
+
+
+# T_hsmm graph
+
+load("../Data/models/T_hsmm.Rdata", verbose = TRUE)
+
+g_T = plot_hsmm_transitions(model = T_hsmm, size = 20, label_size = 0.3*20/2, arrow_gap = 0.1, label_color = "white") +
+  scale_y_continuous(expand = expansion(add = 0.2)) +
+  scale_x_continuous(expand = expansion(add = 0.2))
+
+# ASSEMBLE FIGURE TOGETHER
+
+set.seed(8)
+fig2 = ggarrange(g_tm, g_T, g_model_graph, g_sojourn , ncol = 2, nrow = 2, labels = "auto", heights = c(1, 1), widths = c(1.2,1))
+fig2
+
+
+```
+
+
+
+```{r fig2-R-model-figure, eval = FALSE, echo = FALSE, results = "hide", warning=FALSE, fig.width=10, fig.height=10, out.width='100%', fig.cap=" (b)  (c) Initial marginal distributions in each state."}
+
+
+# marginal emission distributions
+
+g_marg_em = plot_hsmm_marg_dist(model = R_hsmm, show_missing_probs = FALSE) + guides(alpha = FALSE) +
+  theme(panel.spacing.x = unit(10,unit = "pt"))
+
+rm(g_sojourn_1, g_sojourn_2, g_sojourn_3)
+
+
+# ASSEMBLING FIGURE TOGETHER
+
+fig2 = ggarrange(
+  ggarrange(g_model_graph, g_sojourn, ncol = 1, nrow = 2, labels = "auto"),
+  g_marg_em + ggtitle("") + theme(axis.title.x = element_blank()), 
+  labels = c("", "c"),
+  ncol = 2, nrow = 1
+)
+
+fig2
+
+```
+
+
+
+# Figure 3
+
+
+
+```{r fig3, fig.width=10, fig.height=6.5}
+
+# Simulated sequence with decoding
+X = read_feather(path = "../../semiM-Public-Repo/Data/synthetic_data/Xsim.feather")
+RES = read_feather(path = "../../semiM-Public-Repo/Data/decodings/RES_synthetic_data.feather")
+
+Xb = left_join(X %>% 
+                 select(seq_id, t, bleeding, LH, mucus, temp, preg, state) %>%
+                 rename(state_ground_truth = state),
+               RES %>% 
+                 select(seq_id, t, state, prob) %>%  
+                 rename(state_decoded = state, prob_state_decoded = prob),
+               by = c("seq_id","t"))
+
+g_example = plot_hsmm_seq(X = Xb %>% filter(seq_id == 12), 
+                          model = R_hsmm, 
+                          compact_view = TRUE,
+                          add_color_legend_in_compact_view = FALSE,
+                          title = " ") # Labeling of a simulated sequence.
+
+# performances
+load("../../semiM-Public-Repo/Data/plots/g_synth_acc.Rdata")
+g_synth_acc  = g_synth_acc + 
+  theme(strip.background.x = element_rect(fill = "gray80", colour = NA))
+
+# confusion matrix
+
+load("../../semiM-Public-Repo/Data/plots/g_synth_conf_mat.Rdata")
+
+# per-state accuracy
+load("../../semiM-Public-Repo/Data/plots/g_synth_acc_per_state2.Rdata")
+g_synth_acc_per_state2 = g_synth_acc_per_state2 + 
+  theme(strip.background.x = element_rect(fill = "gray80", colour = NA))
+
+
+fig3 = ggarrange(
+  g_example,
+  ggarrange(g_synth_acc, g_synth_acc_per_state2, 
+            ncol = 2, nrow = 1, widths = c(2,4), labels = c("b","c"),
+            align = "h", 
+            common.legend = TRUE, legend = "bottom"),
+  ncol = 1, 
+  nrow = 2,
+  labels = c("a",""),
+  heights = c(1.2,1.4)
+)
+
+fig3
+
+```
+
+
+
+# Figure 4
+
+
+```{r fig4, echo = FALSE, warning=FALSE, fig.width=10, fig.height=3.5}
+
+# Example with GT and decoding
+
+g_example = plot_hsmm_seq(
+  X = XP %>% filter(seq_id == unique(XP$seq_id)[8]) %>% 
+    rename(state_prob = prob), 
+  model = R_hsmm, 
+  compact_view = TRUE,
+  add_color_legend_in_compact_view = FALSE) #,
+  # title = "Labeling of a Kindara user time-series")
+
+
+# confusion matrix
+# load("../../semiM-Public-Repo/Data/plots/g_conf_mat.Rdata")
+# g_conf_mat = g_conf_mat + theme(legend.position = "bottom") 
+
+conf_mat = 
+  XP %>% 
+  filter(!is.na(state_GT)) %>% 
+  group_by(state, state_GT) %>% 
+  summarize(wn = sum(prob),
+            .groups = "drop") %>% 
+  group_by(state_GT) %>% 
+  mutate(wtot = sum(wn)) %>% 
+  ungroup() %>% 
+  mutate(wperc = wn/wtot) %>% 
+  select(-wn, -wtot) %>% 
+  mutate(GT_state_name = 
+           R_hsmm$state_names[state_GT] %>% 
+           factor(., R_hsmm$state_names %>% rev()), 
+         decoded_state_name = 
+           R_hsmm$state_names[state] %>% 
+           factor(., R_hsmm$state_names))
+
+
+
+g_conf_mat = 
+  ggplot(
+    conf_mat, 
+    aes(x = decoded_state_name, y = GT_state_name, fill = wperc)) +
+  geom_tile() +
+  scale_fill_gradient(
+    "State-specific weighted accuracy", 
+    low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "bottom") # +
+  # ggtitle("Weighted state accuracy")
+#g_conf_mat
+
+# ASSEMBLING FIGURE
+
+fig4 = ggarrange(
+  g_example,
+  g_conf_mat,
+  ncol = 2, 
+  nrow = 1,
+  labels = "auto",
+  widths = c(1.5,1)
+)
+
+fig4
+
+```
+
+# Save figures
+
+```{r export-figures}
+
+fig_path = "../Figures_Tables_Media/Figures/"
+
+
+fig1_file = str_c(fig_path, "fig1.png")
+ggsave(fig1_file,
+       plot = fig1,
+       width = 18, height = 8, units = "cm",
+       dpi = 300,
+       scale = 2)
+
+fig2_file = str_c(fig_path, "fig2.png")
+ggsave(fig2_file,
+       plot = fig2,
+       width = 18, height = 15, units = "cm",
+       dpi = 300,
+       scale = 2)
+
+fig3_file = str_c(fig_path, "fig3.png")
+ggsave(fig3_file,
+       plot = fig3,
+       width = 18, height = 10, units = "cm",
+       dpi = 300,
+       scale = 2)
+
+fig4_file = str_c(fig_path, "fig4.png")
+ggsave(fig4_file,
+       plot = fig4,
+       width = 18, height = 6, units = "cm",
+       dpi = 300,
+       scale = 2)
+
+
+```
+
+

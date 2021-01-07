@@ -1,8 +1,8 @@
 ---
 title: "Labelling self-tracked menstrual health records with hidden semi-Markov models"
 subtitle: "Supplementary Material"
-author: "Laura Symul"
-date: "`r format(Sys.time(), '%d %B, %Y - %H:%M')`"
+author: "Laura Symul, Susan Holmes"
+date: "" #`r format(Sys.time(), '%d %B, %Y - %H:%M')`
 output: 
   bookdown::pdf_document2:
     toc: true
@@ -22,7 +22,7 @@ urlcolor: NavyBlue
 fig_width: 7
 fig_height: 5
 abstract: |
-  This is the pdf-rendering of the analyses performed in `R` for the manuscript "Labeling self-tracked menstrual health records with hidden semi-Markov models". The R markdown (.Rmd) files used to generate this pdf can be found on [link]. Each section is a standalone Rmd file and can be run separately. On the same github repository, one can also find binary files with the specified models and the data related to each section, with the exception of the raw Kindara app data as user's time-series cannot be shared publicly to respect users' privacy and data ownership. 
+  This is the pdf-rendering of the analyses performed in `R` for the manuscript "Labeling self-tracked menstrual health records with hidden semi-Markov models". The R markdown (.Rmd) files used to generate this pdf can be found on [https://github.com/lasy/semiM-Public-Repo]. Each section is a standalone Rmd file and can be run separately. On the same github repository, one can also find binary files with the specified models and the data related to each section, with the exception of the raw Kindara app data as user's time-series cannot be shared publicly to respect users' privacy and data ownership. 
 header-includes:
   - \renewcommand{\abstractname}{}
   - \let\counterwithout\relax

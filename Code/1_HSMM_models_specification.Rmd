@@ -23,6 +23,10 @@ source("Scripts/00_setup.R")
 # Hidden semi-Markov models specifications
 
 
+
+In this section, we specify the 3 hidden semi-Markov models (HSMMs) used to decode the app users' time series. We start by specifying the multi-variate model of reproductive events, then simplify this model so that it can be used to decode uni-variate time series of bleeding reports and identify menses from these self-reports, and finally, we specify the model of long-term changes in tracking behavior.
+
+
 ```{r child = '1A_HSMM_R_model_specification.Rmd', cache=TRUE}
 ```
 
