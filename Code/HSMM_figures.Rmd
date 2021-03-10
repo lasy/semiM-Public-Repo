@@ -66,7 +66,7 @@ g_example = ggarrange(plotlist = plotlist, ncol = 1, nrow = 2)
 
 ## Assembled figures
 
-fig1 = ggarrange(g_app_screen, g_example, ncol = 2, nrow = 1, widths = c(1,2), labels = "auto")
+fig1 = ggarrange(g_app_screen, g_example, ncol = 2, nrow = 1, widths = c(1.1,2), labels = "auto")
 fig1
 
 ```
@@ -138,7 +138,7 @@ save(table_missing_data,
 
 # Tracking model
 
-tracking_model = image_read("../Figures_Tables_Media/Media/tracking_model-01.png")
+tracking_model = image_read("../Figures_Tables_Media/Media/tracking_model-02.png")
 
 tracking_model_ratio = image_info(tracking_model)$height / image_info(tracking_model)$width 
 padding = 20
@@ -230,23 +230,23 @@ fig2
 
 
 # marginal emission distributions
-
-g_marg_em = plot_hsmm_marg_dist(model = R_hsmm, show_missing_probs = FALSE) + guides(alpha = FALSE) +
-  theme(panel.spacing.x = unit(10,unit = "pt"))
-
-rm(g_sojourn_1, g_sojourn_2, g_sojourn_3)
-
-
-# ASSEMBLING FIGURE TOGETHER
-
-fig2 = ggarrange(
-  ggarrange(g_model_graph, g_sojourn, ncol = 1, nrow = 2, labels = "auto"),
-  g_marg_em + ggtitle("") + theme(axis.title.x = element_blank()), 
-  labels = c("", "c"),
-  ncol = 2, nrow = 1
-)
-
-fig2
+# 
+# g_marg_em = plot_hsmm_marg_dist(model = R_hsmm, show_missing_probs = FALSE) + guides(alpha = FALSE) +
+#   theme(panel.spacing.x = unit(10,unit = "pt"))
+# 
+# rm(g_sojourn_1, g_sojourn_2, g_sojourn_3)
+# 
+# 
+# # ASSEMBLING FIGURE TOGETHER
+# 
+# fig2 = ggarrange(
+#   ggarrange(g_model_graph, g_sojourn, ncol = 1, nrow = 2, labels = "auto"),
+#   g_marg_em + ggtitle("") + theme(axis.title.x = element_blank()), 
+#   labels = c("", "c"),
+#   ncol = 2, nrow = 1
+# )
+# 
+# fig2
 
 ```
 
@@ -300,7 +300,7 @@ fig3 = ggarrange(
   ncol = 1, 
   nrow = 2,
   labels = c("a",""),
-  heights = c(1.2,1.4)
+  heights = c(1.4,1.2)
 )
 
 fig3
@@ -355,12 +355,13 @@ g_conf_mat =
     aes(x = decoded_state_name, y = GT_state_name, fill = wperc)) +
   geom_tile() +
   scale_fill_gradient(
-    "State-specific weighted accuracy", 
+    "State-specific   \nweighted accuracy   ", 
     low = "white", high = "steelblue4", limits = c(0,1)) +
   coord_fixed() +
   ylab("Manually labelled states") + xlab("Decoded states")+
   theme(axis.text.x = element_text(angle = 90, hjust = 1),
-        legend.position = "bottom") # +
+        legend.position = "bottom",
+        legend.title = element_text(hjust = 1)) # +
   # ggtitle("Weighted state accuracy")
 #g_conf_mat
 
@@ -384,35 +385,35 @@ fig4
 ```{r export-figures}
 
 fig_path = "../Figures_Tables_Media/Figures/"
-
+scale = 1.3
 
 fig1_file = str_c(fig_path, "fig1.png")
 ggsave(fig1_file,
        plot = fig1,
-       width = 18, height = 8, units = "cm",
+       width = 18, height = 10, units = "cm",
        dpi = 300,
-       scale = 2)
+       scale = scale)
 
 fig2_file = str_c(fig_path, "fig2.png")
 ggsave(fig2_file,
        plot = fig2,
        width = 18, height = 15, units = "cm",
        dpi = 300,
-       scale = 2)
+       scale = scale)
 
 fig3_file = str_c(fig_path, "fig3.png")
 ggsave(fig3_file,
        plot = fig3,
-       width = 18, height = 10, units = "cm",
+       width = 18, height = 11, units = "cm",
        dpi = 300,
-       scale = 2)
+       scale = scale)
 
 fig4_file = str_c(fig_path, "fig4.png")
 ggsave(fig4_file,
        plot = fig4,
-       width = 18, height = 6, units = "cm",
+       width = 18, height = 7, units = "cm",
        dpi = 300,
-       scale = 2)
+       scale = scale)
 
 
 ```
