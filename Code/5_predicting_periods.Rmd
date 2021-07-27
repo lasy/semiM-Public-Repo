@@ -50,7 +50,7 @@ X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
 
 ## Selecting users and cycles
 
-```{r predicting-cycles-cycles-and-users-table}
+```{r predicting-cycles-cycles-and-users-table, warning=FALSE}
 
 ans = identify_cycles(RES = RES, X = X) ; RES = ans$RES ; cycles = ans$cycles
 users = cycle_characteristics_per_user(cycles = cycles)

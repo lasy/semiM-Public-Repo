@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.14159265-2.6-0.99999 (TeX Live 2018) (preloaded format=xelatex 2018.4.16)  26 JUL 2021 20:04
+This is XeTeX, Version 3.14159265-2.6-0.99999 (TeX Live 2018) (preloaded format=xelatex 2018.4.16)  27 JUL 2021 10:47
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -3354,17 +3354,12 @@ es/figure-latex/4-sequences-differences-between-fitted-and-specified-10.pdf Gra
 phic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/4-sequences-differences-between-fitted-and-specified-10.pdf>
-[43] [44] [45] [46] [47] [48] [49] [50] [51] [52] [53] [54] [55] [56] [57] [58]
-[59] [60] [61]
-Underfull \vbox (badness 3312) detected at line 2580
+[43] [44] [45] [46] [47]
+Overfull \vbox (1.02193pt too high) detected at line 1776
  []
 
-[62]
-Overfull \vbox (0.95956pt too high) detected at line 2671
- []
-
-[63]
-Overfull \hbox (6446.72215pt too wide) in paragraph at lines 2675--2675
+[48]
+Overfull \hbox (6446.72215pt too wide) in paragraph at lines 1780--1780
 []\TU/Menlo(0)/m/n/10 ## 008a7d168d2ae8ff5fafc410f31cedbff386dcba_1   015f4654d
 5b79b3c23dc89bf2b2742348956259f_1  0b0ff00a3bd310ab401d371981471f46e96c7364_1  
 0b0ff00a3bd310ab401d371981471f46e96c7364_6  0d758b07d00e5090b92b47db7360f5fbb35
@@ -3385,51 +3380,51 @@ d055be6a2931093247f9e0a9ec366bdfd_1  f0f8e3a18fba177fcaf580381c47f39038cf06bf_1
 8cf06bf_11     f0f8e3a18fba177fcaf580381c47f39038cf06bf_16[] 
  []
 
-[64]
-Overfull \hbox (205.1718pt too wide) in paragraph at lines 2722--2722
+[49]
+Overfull \hbox (205.1718pt too wide) in paragraph at lines 1827--1827
 []\TU/Menlo(0)/m/n/10 ## Warning in .check_init(init, J): Initial probabilities
  did not sum to one. Values are normalized such that the initial probabilities 
 sum to 1.[] 
  []
 
-[65]
-Underfull \vbox (badness 10000) detected at line 2869
+[50]
+Underfull \vbox (badness 10000) detected at line 1974
  []
 
 
-Underfull \vbox (badness 10000) detected at line 2869
+Underfull \vbox (badness 10000) detected at line 1974
  []
 
-[66]
+[51]
 File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/predicting-results-HSMM-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/predicting-results-HSMM-1.pdf>
-[67]
+[52]
 File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/predicting-results-comparison-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/predicting-results-comparison-1.pdf>
-[68]
-Underfull \vbox (badness 1082) detected at line 2980
+[53]
+Underfull \vbox (badness 1082) detected at line 2085
  []
 
-[69] [70]
+[54] [55]
 File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/predicting-missingness-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/predicting-missingness-1.pdf>
-[71]
+[56]
 File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/predicting-values-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/predicting-values-1.pdf>
-[72] [73]
+[57] [58]
 File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/within-state-dep-sim-viz-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/within-state-dep-sim-viz-1.pdf>
-[74]
+[59]
 File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/within-state-dep-mod-seq-dep-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
@@ -3438,24 +3433,24 @@ File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/within-state-dep-mod-data-viz-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/within-state-dep-mod-data-viz-1.pdf>
-[75]
+[60]
 File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/within-state-dep-fit-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/within-state-dep-fit-1.pdf>
-[76]
+[61]
 File: 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_fil
 es/figure-latex/within-state-dep-join-em-1.pdf Graphic file (type pdf)
 <use 0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov_file
 s/figure-latex/within-state-dep-join-em-1.pdf>
-[77] [78] [79] [80]
-Package atveryend Info: Empty hook `BeforeClearDocument' on input line 3452.
-[81]
-Package atveryend Info: Empty hook `AfterLastShipout' on input line 3452.
+[62] [63] [64] [65]
+Package atveryend Info: Empty hook `BeforeClearDocument' on input line 2556.
+[66]
+Package atveryend Info: Empty hook `AfterLastShipout' on input line 2556.
 (./0_Supplementary_Material-Labelling_MC_records_with_hidden_semi_Markov.aux)
-Package atveryend Info: Empty hook `AtVeryEndDocument' on input line 3452.
-Package atveryend Info: Empty hook `AtEndAfterFileList' on input line 3452.
-Package atveryend Info: Empty hook `AtVeryVeryEnd' on input line 3452.
+Package atveryend Info: Empty hook `AtVeryEndDocument' on input line 2556.
+Package atveryend Info: Empty hook `AtEndAfterFileList' on input line 2556.
+Package atveryend Info: Empty hook `AtVeryVeryEnd' on input line 2556.
  ) 
 Here is how much of TeX's memory you used:
  28294 strings out of 492970
@@ -3467,4 +3462,4 @@ Here is how much of TeX's memory you used:
  59i,17n,117p,10464b,662s stack positions out of 5000i,500n,10000p,200000b,80000s
 
 Output written on 0_Supplementary_Material-Labelling_MC_records_with_hidden_sem
-i_Markov.pdf (81 pages).
+i_Markov.pdf (66 pages).
