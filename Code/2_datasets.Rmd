@@ -1,0 +1,303 @@
+---
+title: "Datasets"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+
+```{r datasets-setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+source("Scripts/00_setup.R")
+```
+
+# Datasets
+
+
+## Synthetic data generation
+
+
+To generate synthetic data for $N$ fictive users, we first define some key characteristics of these users. First, their highest tracking frequency is defined via a parameter $\alpha$. Then, we randomly sample their menstrual characteristics such as the length and regularity of their follicular and luteal phases or the noise in their temperature measurements from realistic priors.
+
+### Simulating realistic tracking behavior
+
+Because we want to evaluate the performance of our framework given different level of missing data in a realistic context, we first define censoring probabilities for each state and variable that reflect the tracking behavior of a dedicated user whose purpose is to achieve or avoid pregnancy. A dedicated user would not track all the features every day but would instead systematically report the relevant features at the relevant moments of their cycle.
+For example, they would report ovulation test in the days leading and following ovulation, not during their menses.
+
+Once these censoring probabilities are defined, we can modulate them with a parameter $\alpha$ reflecting that some users are less dedicated than others.
+
+We specify realistic censoring probabilities of a dedicated user as follow:
+
+```{r datasets-dedicated-tracking, echo = FALSE}
+
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+rcp = realistic_censoring_probabilities(model = R_hsmm)
+
+```
+
+
+```{r datasets-p-expected-table, echo = FALSE}
+
+rcp$p %>% t() %>% 
+  kable(., 
+        format = "latex", 
+        booktab = TRUE, 
+        caption = "Expected censoring probabilities p.") %>% 
+  kable_styling(full_width = T, latex_options = c("hold_position")) 
+
+```
+
+```{r datasets-q-expected-table, echo = FALSE}
+
+rcp$q %>% kable(., 
+                format = "latex", 
+                booktab = TRUE, 
+                caption = "Expected marginal censoring probabilities q.") %>% 
+  kable_styling(full_width = T, latex_options = c("hold_position")) 
+
+```
+
+
+We now modulate these probabilities with the parameter $\alpha$:
+
+```{r datasets-missing-probs, echo = FALSE}
+
+
+missing_probs = 
+  modulate_censoring_probs(
+    rcp, 
+    alpha_ref = c(0,0.8,1),
+    alphas =  seq(0,1,by = 1/5),
+    alpha_levels = c("absent","rare","occasional","expected","diligent","persistent")
+  )
+
+```
+
+
+```{r datasets-expected-missingness, echo = FALSE, results='hide', fig.height=9, fig.cap="Probabilities for a variable to be reported given different tracking behaviors."}
+
+ggplot(missing_probs,
+       aes(x = alpha_level, y = 1-missing_prob, fill = state_color)) +
+  geom_bar(stat = "identity") +
+  scale_fill_identity() +
+  ylab("Probability of being reported") +
+  xlab("Simulated tracking frequency") +
+  facet_grid(state_name ~ variable) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.text.y = element_text(angle = 0, hjust = 0))
+
+```
+
+
+
+__Generating time-series__
+
+```{r datasets-Xsim}
+
+Xsim_file = "../Data/synthetic_data/Xsim.feather"
+if(!file.exists(Xsim_file)){
+  set.seed(0)
+  s_users = 
+    simulate_individual_characteristics(
+      N_per_alpha = 50, 
+      missing_probs = missing_probs %>%  filter(alpha != 0)
+    )
+  Xsim = generate_time_series(s_users, missing_probs, model = R_hsmm)
+  Xsim = modify_set_of_tracked_variables(Xsim)
+  write_feather(Xsim, Xsim_file)
+}else{
+  Xsim = read_feather(path = Xsim_file)
+}
+
+```
+
+
+__Visualization of synthetic time-series examples__
+
+```{r datasets-selecting-examples-from-each-category}
+
+examples = 
+  Xsim %>% 
+  select(seq_id, tracking_category, alpha_level) %>% 
+  group_by(seq_id, alpha_level) %>% 
+  summarize(has_full_tracking = sum(tracking_category == "full") >= 100, .groups = "drop") %>% 
+  filter(has_full_tracking) %>%
+  group_by(alpha_level) %>% 
+  slice_head(n = 1)
+
+```
+
+```{r datasets-synthetic-example,fig.width=12, fig.height=5, fig.cap="Examples of synthetic time-series."}
+
+for(i in 1:nrow(examples)){
+  ex_id = examples$seq_id[i]
+  plot_hsmm_seq(X = Xsim %>%  filter(seq_id == ex_id), model = R_hsmm,
+                title = str_c(examples$alpha_level[i], " tracking")) %>% 
+    print()
+}
+
+```
+
+__Synthetic dataset characteristics__
+
+```{r datasets-table-tracking-cat}
+
+table(tracking_category = Xsim$tracking_category)  %>% 
+  kable(., format = "latex", booktabs = T, 
+        caption = "Number of data-point in each tracking category.") %>% 
+  kable_styling(latex_options = c("hold_position")) 
+
+```
+
+```{r datasets-histogram-time-series-length, fig.width=4, fig.height=2, fig.cap="Histogram of simulated sequence length."}
+
+table(seq_id = Xsim$seq_id) %>% 
+  data.frame() %>% 
+  set_colnames(c("seq_id","sequence_length")) %>% 
+  ggplot(., aes(x = sequence_length)) +
+  geom_histogram(bins = 50) + expand_limits(x = 0)
+
+```
+
+```{r datasets-effective-tracking-frequency}
+
+tracking_freq_table_synth_data = 
+  Xsim %>% 
+  filter(tracking_category == "full") %>% 
+  group_by(alpha_level) %>% 
+  mutate(any_log = !is.na(bleeding) | !is.na(LH) | !is.na(preg) | !is.na(mucus) | !is.na(temp),
+         any_log = ifelse(!any_log,NA, 1)) %>% 
+  summarize(across(c(bleeding, LH, preg, mucus, temp, any_log), .fns = function(x) sum(!is.na(x))),
+            n = n(),
+            .groups = "drop") %>% 
+  mutate(Effective_tracking_frequency = (bleeding+LH+preg+mucus+temp)/5/n,
+         Frequency_of_opening_the_app = any_log/n) %>% 
+  select(alpha_level, Effective_tracking_frequency, Frequency_of_opening_the_app ) %>% 
+  arrange(alpha_level)
+
+tracking_freq_table_synth_data %>% 
+  rename(Tracking_category = alpha_level) %>% 
+  kable(.,
+        booktab = T,
+        digits = 2,
+        caption = "Effective tracking frequency (fraction of reported variables) and frequency of opening the app (at least one variable is logged at a given time-point) per simulated tracking behaviors.")
+
+```
+
+
+\newpage
+
+## Kindara app data pre-processing and partial manual labeling. {#kindaraprep}
+
+
+__pre-processing function__
+
+```{r datasets-kindara-prepare-obs-fun}
+source("Scripts/00_function_prepare_obs.R")
+```
+
+__pre-processing__
+
+```{r datasets-kindara-preproc}
+
+days = read_feather(path = paste0(IO$tmp_data, "days_selected_users.feather"))
+
+X = purrr::map_dfr(
+  .x = unique(days$user_id),
+  .f = function(uid) prepare_obs(d = days %>% filter(user_id == uid))
+) %>% 
+  rename(seq_id = user_id, t = rel_date)
+
+write_feather(X, path = paste0(IO$output_data, "processed_app_data.feather"))
+
+```
+
+
+__manual labeling__
+
+```{r datasets-kindara-ML}
+
+ML = read_feather(path = paste0(IO$output_data, "ML.feather"))
+
+```
+
+
+```{r datasets-kindara-ML-add, eval = FALSE}
+
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+
+ML = label_sequences(model = R_hsmm, X = X, ground_truth = ML)
+
+write_feather(ML, path = paste0(IO$output_data, "ML.feather"))
+
+```
+
+
+
+
+```{r datasets-kindara-characteristics-and-tracking-frequency}
+
+breaks_tracking_freq = c(0, tracking_freq_table_synth_data$Effective_tracking_frequency)
+breaks_tracking_freq = (breaks_tracking_freq + lag(breaks_tracking_freq))/2
+breaks_tracking_freq = c(0, breaks_tracking_freq[-1],1)
+
+
+breaks_app_open = c(0, tracking_freq_table_synth_data$Frequency_of_opening_the_app)
+breaks_app_open = (breaks_app_open + lag(breaks_app_open))/2
+breaks_app_open = c(0, breaks_app_open[-1],1)
+
+
+users_tracking_freq_cat = 
+  X %>% 
+  group_by(seq_id) %>% 
+  mutate(any_log = !is.na(bleeding) | !is.na(LH) | !is.na(preg) | !is.na(mucus) | !is.na(temp),
+         any_log = ifelse(!any_log,NA, 1)) %>% 
+  summarize(across(c(bleeding, LH, preg, mucus, temp, any_log), .fns = function(x) sum(!is.na(x))),
+            n = n(),
+            .groups = "drop") %>% 
+  mutate(Effective_tracking_frequency = (bleeding+LH+preg+mucus+temp)/5/n,
+         Frequency_of_opening_the_app = any_log/n,
+         tracking_freq_cat = Effective_tracking_frequency %>% 
+           cut(breaks = breaks_tracking_freq,
+               labels = c("none",tracking_freq_table_synth_data$alpha_level %>% as.character())),
+         open_app_cat = Frequency_of_opening_the_app %>% 
+           cut(breaks = breaks_app_open,
+               labels = c("none",tracking_freq_table_synth_data$alpha_level %>% as.character()))
+  ) 
+
+
+users_tracking_freq_cat %>% 
+  group_by(tracking_freq_cat) %>% 
+  summarize(n = n(),
+            perc = n/length(unique(X$seq_id)) * 100,
+            .groups = "drop") %>% 
+  kable(.,
+        booktab = T,
+        digits = 0,
+        caption = "Number and percentage of users in our real-world dataset according to the tracking categories defined for our simulated data, based on the frequency with which they log features.")
+
+```
+```{r datasets-kindara-characteristics-and-tracking-frequency-2}
+
+
+users_tracking_freq_cat %>% 
+  group_by(open_app_cat) %>% 
+  summarize(n = n(),
+            perc = n/length(unique(X$seq_id)) * 100,
+            .groups = "drop") %>% 
+  kable(.,
+        booktab = T,
+        digits = 0,
+        caption = "Number and percentage of users in our real-world dataset according to the tracking categories defined for our simulated data, based on the frequency with which they open the app.")
+
+```
+
+

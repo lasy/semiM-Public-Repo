@@ -1,0 +1,130 @@
+---
+title: "Decoding time-series"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+
+```{r decoding-setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+source("Scripts/00_setup.R")
+rerun_from_here = FALSE
+```
+
+
+# Decoding time-series
+
+## Decoding functions
+
+Functions are implemented in the file `Scripts/00_FAM_decoding_functions.R` which is available on the same github repository as this file.
+
+## Loading models
+
+
+```{r decoding-loading-models, results="hide"}
+
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+load("../Data/models/R_hmm.Rdata", verbose = TRUE)
+load("../Data/models/R_weak_hsmm.Rdata", verbose = TRUE)
+
+```
+
+
+
+## Synthetic data
+
+
+```{r decoding-synthetic-data}
+
+X = read_feather("../Data/synthetic_data/Xsim.feather")
+
+RES.file = "../Data/decodings/RES_synthetic_data.feather"
+
+if(rerun_from_here | !file.exists(RES.file)){
+  
+  RES = purrr::map_dfr(.x = unique(X$seq_id),
+                       .f = function(sid){
+                         # cat(sid, "\n")  # prints the subject IDs
+                         get_most_likely_sequence_with_prob(
+                           X = X %>% 
+                             filter(seq_id == sid) %>% 
+                             select(-alpha, -alpha_level, 
+                                    -state, -tracking_category,
+                                    -temp_sd, 
+                                    -mean_lE_sojourn, -sd_lE_sojourn, 
+                                    -mean_Lut_sojourn, -sd_Lut_sojourn),
+                           verbose = FALSE,
+                           model = R_hsmm
+                         )
+                       }
+  )
+  
+  write_feather(RES, path = RES.file)
+}
+
+```
+
+## App data
+
+We decode the app data using several approaches to compare their accuracy.
+We use our proposed approach to adapt for tracking behavior with the proposed HSMM as well as with a simple HMM and a HSMM with broader sojourn distributions.
+
+We also decode the app data with the proposed HSMM, without adjusting for tracking behavior.
+
+
+```{r decoding-models}
+
+models = 
+  expand_grid(
+    tibble(model = c("R_hmm","R_weak_hsmm","R_hsmm", "R_hsmm"),
+           approach = c("adaptative","adaptative","adaptative","non-adaptative")),
+    fit_model = c(FALSE, TRUE)) %>% 
+  mutate(
+    file_name = 
+      paste0(approach, "_", model, "_", ifelse(fit_model, "fitted","specified"), ".feather")
+  )
+
+write_feather(models, path = paste0(IO$output_data, "models.feather"))
+
+```
+
+
+```{r decoding-loading-app-data}
+
+X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
+ML = read_feather(path = paste0(IO$output_data, "ML.feather"))
+X_all_users = X %>% filter(seq_id %in% unique(ML$seq_id))
+
+```
+
+
+
+
+```{r decoding-app-data}
+
+output_dir = paste0(IO$output_data,"decodings/")
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+exec_times = 
+  purrr::map_dfr(
+    .x = 1:nrow(models),
+    .f = decode_with_model,
+    verbose = TRUE
+  )
+
+# X = X_all_users %>%  filter(seq_id == sid)
+
+```
+
+
+
+

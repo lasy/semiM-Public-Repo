@@ -1,0 +1,594 @@
+---
+title: "Predicting next period"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+
+```{r predicting-setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+source("Scripts/00_setup.R")
+source("Scripts/cycle_and_observation_prediction.R")
+```
+
+
+# Predicting cycle length and next-day observations
+
+In this section, we evaluate the ability of our model to learn the cycle characteristics of users and to predict the next period of irregular users (_i.e._ users with irregular cycle length).
+
+To do so, we filter users (or part of their time-series) to keep those with irregular cycles and who log with a tracking frequency of at least 1/3 days. 
+
+We compare the predictions from our model with the baseline prediction which is based on the mean or median cycle length of previous cycles.
+
+## Loading models and decoding results
+
+```{r predicting-loading-models, results="hide"}
+
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+
+```
+
+```{r predicting-load-decodings}
+
+RES.file = paste0(IO$output_data, "decodings/adaptative_R_hsmm_specified.feather")
+RES = read_feather(path = RES.file)
+rm(RES.file)
+
+X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
+
+
+```
+
+## Selecting users and cycles
+
+```{r predicting-cycles-cycles-and-users-table}
+
+ans = identify_cycles(RES = RES, X = X) ; RES = ans$RES ; cycles = ans$cycles
+users = cycle_characteristics_per_user(cycles = cycles)
+
+```
+
+We select cycles
+- which were found to be ovulatory cycles with our hsmm-based labeling
+- in which the states were estimated with a probability over 30%
+- in which users have at least tracked their mucus, temperature or ovulation tests
+- which were part of a stretch of at least 5 consecutive cycles fulfilling the above conditions and which had a cumulative absolute differences in cycle length of at least 5 days over the consecutive cycles.
+
+```{r predicting-filtering-timeseries}
+
+cycles = 
+  cycles %>% 
+  arrange(seq_id, cycle_number) %>% 
+  group_by(seq_id) %>% 
+  mutate(
+    ovulatory_cycles = frollsum(ovulatory_cycle, n = 5, align = "left") == 5,
+    ovu_prob_ok = frollsum(ovu_prob >= 0.5, n = 5, align = "left") == 5,
+    state_prob_ok = frollsum(min_prob >= 0.3, n = 5, align = "left") == 5,
+    sufficient_tracking = frollsum(tracking_behavior %in% c("BLH","BM","BT","BTM"), n = 5, align = "left") == 5,
+    variability = 
+      (frollapply(cycle_length, n = 5, align = "left",
+                  FUN = function(x) sum(abs(diff(x)))) >= 8) %>% 
+      replace_na(FALSE),
+    ok_cycles = ovulatory_cycles & ovu_prob_ok & state_prob_ok & sufficient_tracking  & variability) %>% 
+  ungroup()
+
+
+selected_consecutive_cycles = 
+  cycles %>% 
+  filter(ok_cycles) %>% 
+  select(seq_id, cycle_number) %>% 
+  group_by(seq_id) %>% 
+  mutate(stretch_number = row_number(),
+         stretch_id = str_c(seq_id, "_", stretch_number)) %>% 
+  ungroup() %>% 
+  filter(stretch_number %in% c(1,6,11,16,21)) %>% 
+  expand_grid(data.frame(cycle_number_increment = 0:4)) %>% 
+  mutate(cycle_number = cycle_number + cycle_number_increment,
+         rel_cycle_nb = cycle_number_increment + 1) %>% 
+  select(-cycle_number_increment) %>% 
+  left_join(
+    ., 
+    cycles %>% select(seq_id, cycle_number, cycle_start, cycle_end, cycle_length),
+    by = c("seq_id","cycle_number")
+    )
+
+
+selected_consecutive_cycles %>% select(seq_id, stretch_id, cycle_number) %>% distinct() %>% nrow()
+selected_consecutive_cycles %>% select(seq_id, stretch_id) %>% distinct() %>% nrow()
+selected_consecutive_cycles %>% select(seq_id) %>% distinct() %>% nrow()
+
+```
+
+## Fitting the model to each user time series
+
+
+### Building the input dataset
+
+
+```{r predicting-creating-input}
+
+# for each user
+# for each consecutive stretch
+# we keep the 4 first cycles (= training cycles)
+
+input = data.frame()
+input_baseline = data.frame()
+output = data.frame() # for cycle length prediction
+fifth_cycles = data.frame()
+
+for(str_id in unique(selected_consecutive_cycles$stretch_id)){
+  cat(str_id, "\t")
+  cycles_this_stretch = selected_consecutive_cycles %>% filter(stretch_id == str_id)
+  
+  # X input
+  
+  cycles_for_input = cycles_this_stretch %>% filter(rel_cycle_nb %in% 1:4)
+  X_input = 
+    X %>%  
+    filter(seq_id == cycles_this_stretch$seq_id[1],
+           t >= min(cycles_for_input$cycle_start),
+           t <= max(cycles_for_input$cycle_end)+5) %>%  # we add 5 days so that the next period is included
+    rename(user_id = seq_id) %>% 
+    mutate(seq_id = str_id)
+  
+  input = bind_rows(input, X_input)
+  
+  
+  # baseline input
+  this_input_baseline = 
+    cycles_for_input %>% 
+    select(seq_id, cycle_number, cycle_length) %>% 
+    rename(user_id = seq_id) %>% 
+    mutate(seq_id = str_id)
+  
+  input_baseline = bind_rows(input_baseline, this_input_baseline)
+  
+  # X fifth cycle
+  cycle_5 = cycles_this_stretch %>% filter(rel_cycle_nb == 5)
+  X_cycle_5 = 
+    X %>% 
+    filter(seq_id == cycles_this_stretch$seq_id[1],
+           t >= min(cycle_5$cycle_start),
+           t <= max(cycle_5$cycle_end)) %>%
+    rename(user_id = seq_id) %>% 
+    mutate(seq_id = str_id)
+  
+  fifth_cycles = bind_rows(fifth_cycles, X_cycle_5)
+  
+  # output to predict
+  this_output = 
+    cycle_5 %>% 
+    select(seq_id, cycle_number, cycle_length, cycle_start, cycle_end) %>% 
+    rename(user_id = seq_id) %>% 
+    mutate(seq_id = str_id)
+  output = bind_rows(output, this_output)
+}
+
+cat("\n")
+
+```
+
+
+
+### Ovulatory cycle model
+
+First, since all of our predictions are made for ovulatory cycles, we reduce our model to only include the states related to ovulatory cycles.
+
+```{r predicting-hsmm-model-for-ovulatory-cycles-only}
+
+J = 7
+marg_em_probs = R_hsmm$marg_em_probs
+for(var in names(marg_em_probs)){
+  if(marg_em_probs[[var]]$type == "non-par") 
+    marg_em_probs[[var]]$params$probs = marg_em_probs[[var]]$params$probs[,1:J]
+  if(marg_em_probs[[var]]$type == "binom"){
+    marg_em_probs[[var]]$params$size = marg_em_probs[[var]]$params$size[1:J]
+    marg_em_probs[[var]]$params$prob = marg_em_probs[[var]]$params$prob[1:J]
+  }
+  if(marg_em_probs[[var]]$type == "norm"){
+    marg_em_probs[[var]]$params$mean = marg_em_probs[[var]]$params$mean[1:J]
+    marg_em_probs[[var]]$params$sd = marg_em_probs[[var]]$params$sd[1:J]
+  }
+}
+
+# modify R_hsmm >> become P_hsmm (P for predictions)
+P_hsmm = specify_hsmm(
+  J = J ,
+  state_names = R_hsmm$state_names[1:J],
+  state_colors = R_hsmm$state_colors[1:J],
+  init = R_hsmm$init[1:J],
+  transition = R_hsmm$transition[1:J, 1:J],
+  sojourn = R_hsmm$sojourn[1:J],
+  marg_em_probs = marg_em_probs,
+  censoring_probs = list(p = R_hsmm$censoring_probs$p[1:J],
+                         q = R_hsmm$censoring_probs$q[, 1:J])
+)
+
+```
+
+
+### Training the model
+
+For each user, we fit the model to their first four cycles.
+
+```{r predicting-fitting-model-for-each-user}
+
+fitted_model_dir = "../Data/fitted_models/"
+# unlink(fitted_model_dir, recursive = TRUE)
+
+#tic()
+if(!file.exists(fitted_model_dir)){
+  dir.create(fitted_model_dir)
+  done = purrr::map(
+    .x = 1:length(unique(input$seq_id)),
+    .f = function(i){
+      cat(i, "\t")
+      sid = unique(input$seq_id)[i]
+      trained_model = 
+        fit_hsmm(model = P_hsmm, 
+                 X = input %>% filter(seq_id == sid),
+                 N0_emission = 10,
+                 N0_sojourn = 0)
+      save(trained_model, file = str_c(fitted_model_dir,sid,".Rdata"))
+    }
+  )
+}
+#toc() # 35 sec
+
+```
+
+
+
+## Predicting cycle length
+
+```{r predicting-actual-predictions}
+
+pred_file = "../Data/cycle_length_pred.feather"
+
+if(!file.exists(pred_file)){
+  
+  # for each seq_id
+  pred = purrr::map_dfr(
+    .x = 1:length(unique(input$seq_id)),
+    .f = function(i){
+      cat(i, "\t")
+      sid = unique(input$seq_id)[i]
+      # we retrieve the output for this user
+      this_output = output %>% filter(seq_id == sid)
+      # we retrieve the fitted model for this user
+      load(file = str_c(fitted_model_dir,sid,".Rdata"))
+      # we retrieve the fifth cycle of this user
+      this_fifth_cycle = fifth_cycles %>% filter(seq_id == sid)
+      
+      # Baseline
+      # The predicted cycle length is the mean of the cycle length of the 4 cycles. 
+      # Uncertainty is the standard deviation over these 4 cycles.
+      baseline_pred = 
+        input_baseline %>% 
+        filter(seq_id == sid) %>% 
+        summarize(uncertainty = sd(cycle_length),
+                  cycle_length = mean(cycle_length)) %>% 
+        mutate(diff = cycle_length - this_output$cycle_length) %>% 
+        full_join(., data.frame(cycleday = 1:this_output$cycle_length), 
+                  by = character()) %>% 
+        mutate(model = "Baseline",
+               cycleday_backward = cycleday - this_output$cycle_length - 1)
+      
+      # Predict from each day of the next cycle
+      t_cycle_start = min(this_fifth_cycle$t)
+      hsmm_pred = purrr::map_dfr(
+        .x = 1:this_output$cycle_length,
+        .f = function(cd){
+          # first we decode the 5th cycle until day cd
+          dec = 
+            predict_states_hsmm(
+            model = trained_model$model, 
+            X = this_fifth_cycle %>% filter(t <= t_cycle_start + cd - 1), 
+            ground_truth = data.frame(seq_id = sid, 
+                                      t = t_cycle_start, 
+                                      state = 1),
+            trust_in_ground_truth = 1,
+            method = "Viterbi")
+          # we detect the last state transition
+          last_state_transition = 
+            dec$state_seq %>% 
+            group_by(state) %>% 
+            summarize(t_last_transition = min(t), .groups = "drop") %>%
+            arrange(-t_last_transition) %>% 
+            slice_head()
+          # we simulate X times and we compute the mean and sd of the predicted cycle lengths
+          # (we don't really simulate, we sample the sojourns from the last state transitions)
+          Ns = 100
+          hsmm_pred_this_cd = 
+            purrr::map_dfr(
+              .x = last_state_transition$state:7,
+              .f = function(s){
+                data.frame(state = s, i = 1:Ns, 
+                           sojourn = sample(1:length(trained_model$model$sojourn[[s]]$d), 
+                                            Ns, prob = trained_model$model$sojourn[[s]]$d,
+                                            replace = TRUE))
+              }
+            ) %>% 
+            group_by(i) %>% 
+            summarize(cycle_length_from_last_transition = sum(sojourn), .groups = "drop") %>% 
+            mutate(cycle_length = 
+                     cycle_length_from_last_transition + 
+                     last_state_transition$t_last_transition - 
+                     t_cycle_start
+            ) %>% 
+            summarize(uncertainty = sd(cycle_length),
+                      cycle_length = mean(cycle_length)) %>% 
+            mutate(cycleday = cd, diff = cycle_length - this_output$cycle_length)
+          
+          hsmm_pred_this_cd
+        }
+      ) %>% 
+        mutate(model = "HSMM",
+               cycleday_backward = cycleday - this_output$cycle_length - 1)
+      
+      
+      this_seq_pred = bind_rows(baseline_pred, hsmm_pred) %>% 
+        mutate(seq_id = sid)
+      this_seq_pred
+    }
+  )
+  
+  write_feather(pred, path = pred_file)
+  
+}else{
+  pred = read_feather(path = pred_file)
+}
+
+
+# ggplot(this_seq_pred, aes(x = cycleday_backward, y = diff, col = model)) +
+#   geom_hline(yintercept = 0, col = "black")+
+#   geom_line() +
+#   geom_ribbon(aes(ymin = diff - uncertainty, ymax = diff + uncertainty, fill = model), 
+# col = NA, alpha = 0.5)
+
+```
+
+### Results
+
+```{r predicting-results-HSMM, fig.cap="Distribution of the errors on the cycle length prediction from the HSMM simulations as one progresses through the cycles."}
+
+# ggplot(pred %>% filter(model == "HSMM", cycleday_backward >= -25), 
+# aes(x = cycleday_backward, y = diff, col = model, group = seq_id))+
+#   geom_line(alpha = 0.1) + geom_hline(yintercept = 0, linetype = 2)
+
+ggplot(pred %>% 
+         filter(model == "HSMM", cycleday_backward >= -25) %>% 
+         mutate(diff_bin = round(diff)) %>% 
+         group_by(cycleday_backward, diff_bin, model) %>% 
+         summarize(n = n(), .groups = "drop") , 
+       aes(x = cycleday_backward, y = diff_bin, fill = n))+
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  expand_limits(fill = 0) +
+  ylim(c(-12,12)) + geom_hline(yintercept = 0, linetype = 2)
+
+
+```
+
+```{r predicting-results-comparison, fig.cap="Comparison of the distributions of the error on the cycle length prediction between the HSMM and the baseline method."}
+
+ggplot(pred %>% filter(cycleday_backward %in% c(-25, -10)),
+       aes(x = diff, fill = model)) +
+  geom_density(alpha = 0.3, col = NA)+
+  facet_grid(cycleday_backward ~ .)
+
+
+```
+
+
+
+```{r predicting-MSE-table}
+
+pred_cycleday = c("At cycle start", "After ovulation\n(10 days before next cycle)")
+pred_cycleday = factor(pred_cycleday, levels = pred_cycleday)
+
+pred_res_table = 
+  pred %>% 
+  filter(cycleday_backward == -10 | cycleday == 1) %>% 
+  mutate(pred_cycleday = pred_cycleday[(cycleday != 1)+1]) %>% 
+  group_by(pred_cycleday, model) %>% 
+  summarize(MSE = mean(diff^2), .groups = "drop") %>% 
+  pivot_wider(names_from = model, values_from = MSE, names_prefix = "MSE ") %>% 
+  rename(`Prediction day` = pred_cycleday)
+
+save(pred_res_table, file = "../Data/cycle_length_pred_summary_table.Rdata")
+
+kable(pred_res_table, digits = 2, caption = "MSE on the cycle length prediction for both model when made at the cycle start or 10 days before the next period.")
+
+```
+
+
+## Predicting observations over the next days
+
+
+```{r predicting-observations}
+
+predictions_dir = "../Data/obs_predictions/"
+if(!dir.exists(predictions_dir)) dir.create(predictions_dir)
+
+preds_with_fitted_model = 
+  predict_obs(input = input, fifth_cycle = fifth_cycles, model = "fitted", 
+              file = str_c(predictions_dir,"predictions_with_fitted_model.feather"), 
+              reset = FALSE)
+# 2 min
+
+preds_with_specified_model = 
+  predict_obs(input = input, fifth_cycle = fifth_cycles, model = "specified", 
+              file = str_c(predictions_dir,"predictions_with_specified_model.feather"), 
+              reset = FALSE)
+# 2 min
+
+preds_baseline = 
+  predict_obs(input = input, fifth_cycle = fifth_cycles, model = "baseline", 
+              file = str_c(predictions_dir,"predictions_baseline.feather"), 
+              reset = FALSE)
+# 4 sec
+
+```
+
+
+
+
+
+### Comparing predictions from the three models
+
+
+```{r predicting-assembling-observation-predictions}
+
+preds = 
+  bind_rows(
+    preds_baseline %>% 
+      select(seq_id, t, bleeding, mucus, temp, LH, preg) %>% 
+      mutate(model = "baseline"),
+    preds_with_fitted_model %>% 
+      select(seq_id, t, bleeding, mucus, temp, LH, preg) %>% 
+      mutate(model = "fitted HSMM"),
+    preds_with_specified_model %>% 
+      select(seq_id, t, bleeding, mucus, temp, LH, preg) %>% 
+      mutate(model = "specified HSMM")
+  )
+
+```
+
+
+__Missingness__
+
+```{r predicting-adding-cycleday-to-fifth-cycle}
+
+fifth_cycles = 
+  fifth_cycles %>% 
+  arrange(seq_id, t) %>% 
+  group_by(seq_id) %>% 
+  mutate(cycle_length = n(),
+         cycleday_fw = row_number(),
+         cycleday_bw = row_number() - cycle_length - 1,
+         cycleday = ifelse(cycleday_bw >= -18, cycleday_bw, cycleday_fw)) %>% 
+  ungroup()
+
+```
+
+
+
+```{r predicting-missingness, fig.height=6, fig.width=10, fig.cap="Predicting next day observations: error on missingness prediction."}
+
+
+preds_missing = 
+  preds %>% 
+  mutate(across(.cols = c(bleeding, mucus, temp, LH, preg), .fns = is.na)) %>% 
+  pivot_longer(
+    cols = c(bleeding, mucus, temp, LH, preg),
+    names_to = "var",
+    values_to = "is_missing"
+  ) %>% 
+  group_by(seq_id, t, model, var) %>% 
+  summarize(p_missing = mean(is_missing), .groups = "drop") %>% 
+  left_join(fifth_cycles %>% 
+              select(-user_id) %>% 
+              mutate(across(.cols = c(bleeding, mucus, temp, LH, preg), .fns = is.na)) %>% 
+              pivot_longer(
+                cols = c(bleeding, mucus, temp, LH, preg),
+                names_to = "var",
+                values_to = "is_missing"
+              ),
+            by = c("seq_id", "t","var")) %>% 
+  mutate(error = ifelse(is_missing, 1-p_missing, p_missing))
+
+
+ggplot(preds_missing %>% filter( cycleday %in% -18:10), 
+       aes(x = cycleday %>% factor(., levels = c(1:10,-18:-1)), 
+           fill = model, col = model, y = error)) +
+  geom_boxplot(alpha = 0.5) +
+  facet_grid(var ~ .) +
+  xlab("cycleday") + ylab("error on missingness")
+
+```
+
+__Values__
+
+
+```{r predicting-values, fig.height=6, fig.width=10, fig.cap="Predicting next day observations: MSE on value prediction"}
+
+preds_values = 
+  preds %>% 
+  mutate(bleeding = factor(bleeding, levels = c("none","spotting","light","medium","heavy")) %>% as.numeric()) %>% 
+  rename(pred_bleeding = bleeding, 
+         pred_mucus = mucus,
+         pred_temp = temp,
+         pred_LH = LH,
+         pred_preg = preg) %>% 
+  left_join(
+    .,
+    fifth_cycles %>% 
+      mutate(bleeding = factor(bleeding, levels = c("none","spotting","light","medium","heavy")) %>% as.numeric()) %>% 
+      rename(
+        actual_bleeding = bleeding, 
+        actual_mucus = mucus,
+        actual_temp = temp,
+        actual_LH = LH,
+        actual_preg = preg),
+    by = c("seq_id","t")
+  ) %>% 
+  mutate(error_bleeding = abs(actual_bleeding - pred_bleeding),
+         error_mucus = (actual_mucus != pred_mucus)*1,
+         error_temp = (actual_temp - pred_temp)^2,
+         error_LH = (actual_LH != pred_LH)*1,
+         error_preg = (actual_preg != pred_preg)*1
+  ) %>% 
+  select(seq_id, t, cycleday, model, starts_with("error_")) %>% 
+  pivot_longer(
+    cols =  starts_with("error_"),
+    names_to = "var",
+    values_to = "error",
+    names_prefix = "error_"
+  ) %>% 
+  filter(!is.na(error)) %>% 
+  group_by(seq_id, t, cycleday, model, var) %>% 
+  mutate(MSE = mean(error)) %>% 
+  ungroup()
+
+
+ggplot(preds_values %>% filter( cycleday %in% -16:12, var != "preg") %>% 
+         mutate(
+           cycle_phase = 
+             case_when(cycleday %in% 1:6 ~ "menses",
+                       cycleday %in% 7:12 ~ "follicular phase",
+                       cycleday %in% -16:-12 ~ "peri-ovulatory phase",
+                       cycleday %in% -12:-1 ~ "luteal phase") %>% 
+             factor(., levels = c("menses","follicular phase","peri-ovulatory phase","luteal phase")),
+           cycleday = cycleday %>% factor(., levels = c(1:12,-16:-1))
+         ), 
+       aes(x = cycleday, col = model, fill = model, y = MSE)) +
+  geom_boxplot(varwidth = FALSE, outlier.size = 0.5, alpha = 0.5) +
+  facet_grid(var ~ cycle_phase, scales = "free", space = "free")
+
+```
+
+
+
+```{r predicting-MSE-mean-table}
+
+preds_values %>% group_by(var, model) %>% summarize(mean_MSE = mean(MSE)) %>% 
+  pivot_wider(id_cols = var, names_from = model, values_from = mean_MSE)  %>% kable(.)
+
+```
+
+
+
+
+
+
+

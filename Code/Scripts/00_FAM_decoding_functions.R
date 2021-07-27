@@ -1,101 +1,182 @@
 
-get_most_likely_sequence_with_prob = function(X, fit_models = FALSE, verbose = FALSE){
-  decoding = decode_user_timeseries(X, fit_models = fit_models, verbose = verbose)
-  decoding %>% filter(is_on_most_likely_path) %>% select(-is_on_most_likely_path, -common_overlap)
+decode_with_model = function(m, verbose = FALSE) {
+  cat(m, "\n")
+  this_model = models[m,]
+  res_file = paste0(output_dir, this_model$file_name)
+  
+  tic()
+  if (!file.exists(res_file)){
+    eval(parse(text = paste0("model = ",this_model$model)))
+    if (this_model$approach == "adaptative"){
+      res = 
+        decode_with_adaptation(
+          X_all_users, model, is_hmm = ifelse(this_model$model == "R_hmm", TRUE, FALSE), 
+          this_model$fit_model, verbose
+          )
+    } else {
+      res = decode_without_adaptation(X_all_users, model, this_model$fit_model, verbose)
+    }
+    write_feather(res, path = res_file)
+  }
+  a = toc(quiet = TRUE)
+  this_model$exec_time = (a$toc - a$tic) %>% as.numeric()
+  this_model
 }
 
 
-decode_user_timeseries = function(X, fit_models = FALSE, verbose = FALSE){
-  res_M = decode_with_M_model(X, verbose = verbose)
+
+decode_with_adaptation = function(X, model, is_hmm, fit_model, verbose = FALSE){
+  purrr::map_dfr(
+    .x = unique(X$seq_id),
+    .f = function(sid){
+      if (verbose) cat(sid, "\n")
+      get_most_likely_sequence_with_prob(
+        X = X %>% filter(seq_id == sid), 
+        model = model,
+        is_hmm = is_hmm,
+        fit_model = fit_model,
+        verbose = FALSE)
+    }
+  )
+}
+
+
+
+get_most_likely_sequence_with_prob = 
+  function(X, 
+           model, 
+           is_hmm = FALSE,
+           fit_model = FALSE, 
+           verbose = FALSE){
+    decoding = decode_user_timeseries(X, model = model, is_hmm = is_hmm, fit_model = fit_model, verbose = verbose)
+    decoding %>% filter(is_on_most_likely_path) %>% select(-is_on_most_likely_path)
+  }
+
+
+decode_user_timeseries = function(X, model, is_hmm = FALSE, fit_model = FALSE, verbose = FALSE){
+  res_M =  identify_cycles_from_bleeding(X, model, is_hmm, verbose)
+  GT = ground_truth_from_res_M(res_M, model)
   stretches = identify_tracking_categories(X, res_M = res_M, verbose = verbose)
-  decodings = purrr::map_dfr(.x = 1:nrow(stretches), 
-                             .f = decode_stretch, 
-                             stretches = stretches, 
-                             X = X, 
-                             res_M = res_M,
-                             fit_model = fit_models,
-                             verbose = verbose)
-  decoding = stitch_stretches(decodings, verbose = verbose)
-  if(any(!decoding$common_overlap, na.rm = TRUE)) decoding = fix_stitches(decoding = decoding, X = X, res_M = res_M, fit_models = fit_models, verbose = verbose)
+  decodings = decode_stretches(X, model, is_hmm, GT = GT, stretches, fit_model = fit_model, verbose = verbose)
+  # ggplot(decodings %>%  filter(is_on_most_likely_path) %>% mutate(stretch_number = stretch_number %>%  factor()),
+  #        aes(x = t, y = state, col = stretch_number)) + 
+  #   geom_line()
+  decoding = stitch_stretches(decodings, X, model, is_hmm, fit_model,  verbose = verbose)
+  # ggplot(decoding %>%  filter(is_on_most_likely_path) %>% mutate(stretch_number = stretch_number %>%  factor()),
+  #        aes(x = t, y = state)) + 
+  #   geom_line() + geom_point(size = 0.5, aes(col = stretch_number))
   decoding
 }
 
+ground_truth_from_res_M = function(res_M, model){
+  res_M %>% 
+    filter(
+      state %in% which(model$state_names %in% c("M","B")), 
+      prob > 0.75, 
+    ) %>% 
+    mutate(
+      trust = 0.75
+    ) %>% 
+    select(seq_id, t, state, trust)
+}
 
-decode_with_M_model = function(X, verbose = FALSE){
+decode_stretches = function(X, model, is_hmm = FALSE, GT = data.frame(), stretches, fit_model = FALSE, verbose = FALSE) {
+  purrr::map_dfr(.x = 1:nrow(stretches), 
+                 .f = decode_stretch, 
+                 stretches = stretches, 
+                 X = X, 
+                 GT = GT,
+                 fit_model = fit_model,
+                 is_hmm = is_hmm,
+                 model = model,
+                 verbose = verbose)
+}
+
+
+identify_cycles_from_bleeding = function(X, model, is_hmm, verbose = FALSE){
   if(verbose) cat("identifying menses\n")
   
-  # 1. prepare observations for menses-identifying model
-  XM = X %>% select(seq_id, t, bleeding)
+  # 1. prepare observations and menses-identifying model
+  XM = X %>% mutate(LH = NA, preg = NA, mucus = NA, temp = NA)
+  model = adjust_model(tracking_behavior = "B", X = XM, model = model, is_hmm = is_hmm, verbose = verbose)
   
   # 2. decode with menses-identifying model
-  vit_M = predict_states_hsmm(model = M_hsmm, X = XM, method = "Viterbi")
-  smoo_M = predict_states_hsmm(model = M_hsmm, X = XM, method = "FwBw")
-  if(nrow(smoo_M$state_seq) == 0) smoo_M = predict_states_hsmm(model = M_hsmm, X = XM, method = "FwBw", ground_truth = vit_M$state_seq)
+  vit_M = predict_states_hsmm(model = model, X = XM, method = "Viterbi")
+  smoo_M = predict_states_hsmm(model = model, X = XM, method = "FwBw")
+  if(nrow(smoo_M$state_seq) == 0) smoo_M = predict_states_hsmm(model = model, X = XM, method = "FwBw", ground_truth = vit_M$state_seq)
   
   # 3. res_M
-  res_M =  left_join(vit_M$state_seq %>% select(seq_id, t, state),
-                     smoo_M$probabilities %>% select(seq_id, t, state, state_prob) %>% rename(prob = state_prob),
-                     by = c("seq_id","t","state"))
-   
+  res_M =  
+    left_join(vit_M$state_seq %>% select(seq_id, t, state),
+              smoo_M$probabilities %>% 
+                select(seq_id, t, state, state_prob) %>% 
+                rename(prob = state_prob),
+              by = c("seq_id","t","state"))
+  
+  # 4. identify cycle starts
+  res_M = 
+    res_M %>% 
+    group_by(seq_id) %>% 
+    mutate(
+      menses = ((state == 1) & (prob > 0.75)) * 1,
+      is_day_1 = menses & (!lag(menses) | is.na(lag(menses))),
+      cycle_number = cumsum(is_day_1)
+    ) %>% 
+    ungroup() 
+  
+  
   res_M
 }
 
 
 identify_tracking_categories = function(X, res_M, verbose = FALSE){
   if(verbose) cat("Identifying stretches of specific tracking behaviors\n")
-
-  # 1. prepare observations for tracking categories model
+  
+  # 1. identify cycle starts
   XT = X %>% 
     left_join(., res_M, by = c("seq_id", "t")) %>% 
-    mutate(any.menses = ((state == 1) & (prob > 0.75)) * 1,
-           any.preg = (!is.na(preg))*1,
-           any.LH = (!is.na(LH))*1,
-           any.mucus = (!is.na(mucus))*1,
-           any.temp = (!is.na(temp))*1) %>% 
-    select(seq_id, t, starts_with("any"))
+    group_by(seq_id, cycle_number) %>% 
+    mutate(
+      cycle_start = min(t),
+      cycle_end = max(t),
+      cycle_length = n(),
+      period_length = sum(menses),
+      group = str_c(seq_id,"_",cycle_number)
+    )
   
-  # 2. decode with T_hsmm
-  smoo =  predict_states_hsmm(model = T_hsmm, X = XT, method = "FwBw")
+  # 2. for each cycle, determine the tracking category
+  tracking_behavior_per_cycle =
+    compute_tracking_behavior(XT)
   
-  # 3. identify the stretches
-  tn = which(T_hsmm$state_names == "transition")
-  stretches = smoo$state_seq %>%  
-    # define a stretch_id
-    mutate(change = (state != lag(state)) %>% replace_na(TRUE),
-           stretch_id = cumsum(change)) %>% 
-    group_by(stretch_id) %>% 
-    # identify starts and ends
-    mutate(start = min(t),
-           end = max(t)) %>%
-    filter(t == start) %>% 
-    select(seq_id, state, stretch_id, start, end) %>% 
-    ungroup() %>% 
-    # make sure there is a transition state between each other states
-    mutate(has_transition_state = (((state != tn) & lead(state) == tn)) | ((state == tn) & (lag(state) != tn)),
-           has_transition_state = has_transition_state %>% replace_na(TRUE))
-  
-  stretches = stretches %>% 
-    bind_rows(., stretches %>% filter(!has_transition_state) %>% mutate(state = tn, start = end-1, end = end+1)) %>% 
-    select(-has_transition_state) %>% 
-    arrange(seq_id, start) %>% 
-    mutate(stretch_id = row_number()) %>% 
-    # remove transition state
-    mutate(start2 = lag(start),
-           end2 = lead(end)) %>% 
-    filter(state != tn) %>% 
-    mutate(start = ifelse(is.na(start2),start, start2),
-           end = ifelse(is.na(end2), end, end2)) %>% 
-    select(seq_id,state, start, end) %>% 
-    # remove consecutive duplicates
-    mutate(stretch_id = (state != lag(state)) %>% replace_na(TRUE) %>% cumsum()) %>% 
-    group_by(seq_id, stretch_id, state) %>% 
-    summarize(start = min(start),
-              end = max(end),
-              length = end - start,
-              .groups = "drop") %>% 
-    # add the state/model name
-    mutate(tracking_behavior = T_hsmm$state_names[state]) %>% 
-    select(-state)
+  # 3. group cycles with the same category together
+  stretches = 
+    XT %>% 
+    group_by(group) %>%
+    slice_head(n = 1) %>% 
+    arrange(t) %>% 
+    left_join(
+      .,
+      tracking_behavior_per_cycle %>%  select(group, tracking_behavior), 
+      by = "group") %>%     
+    group_by(seq_id) %>% 
+    mutate(
+      stretch_start = 
+        (tracking_behavior != lag(tracking_behavior)) | 
+        (lag(tracking_behavior) %>% is.na()),
+      stretch_number = cumsum(stretch_start)) %>% 
+    group_by(seq_id, stretch_number, tracking_behavior) %>% 
+    summarize(
+      start = min(cycle_start),
+      end = max(cycle_end),
+      first_period_duration = period_length[1],
+      .groups = "drop"
+    ) %>% 
+    mutate(
+      end = end + ifelse(is.na(lead(first_period_duration)), 0, lead(first_period_duration)),
+      length = end - start
+    ) %>% 
+    select(seq_id, stretch_number, start, end, length, tracking_behavior) %>% 
+    filter(length > 0)
   
   #4. returns the stretches
   stretches
@@ -103,34 +184,59 @@ identify_tracking_categories = function(X, res_M, verbose = FALSE){
 
 
 
-decode_stretch = function(i, stretches, X, res_M, fit_model = FALSE, verbose = FALSE){
+compute_tracking_behavior <- function(df){
+  df %>% 
+    group_by(group) %>% 
+    summarize(
+      start = min(t),
+      end = max(t), 
+      length = n(),
+      across(.cols = c("mucus", "temp","LH", "preg"),
+             .fns = function(x) sum(!is.na(x)),
+             .names = "n_{.col}"),
+      n_cycles = length(unique(str_c(seq_id,"_",cycle_number))),
+      .groups = "drop") %>% 
+    mutate(
+      tracking_behavior = 
+        case_when(
+          (n_mucus >= 5*n_cycles) & (n_temp >= 8*n_cycles) ~ "BTM",
+          (n_mucus >= 5*n_cycles) ~ "BM",
+          (n_temp >= 8*n_cycles) ~ "BT",
+          (n_LH >= n_cycles) ~ "BLH",
+          (n_preg >= n_cycles) ~ "BP",
+          TRUE ~ "B"
+        )
+    )
+}
+
+
+decode_stretch = function(i, stretches, X, GT = data.frame(), model, is_hmm = FALSE, fit_model = FALSE, start_end_on_menses = FALSE, verbose = FALSE){
   stretch = stretches[i,]
-  if(verbose) cat("Decoding stretch",i," -  model:",stretch$tracking_behavior," -  [",stretch$start,":",stretch$end,"] length =",stretch$length," ,\n")
+  if(verbose) cat("Decoding stretch",stretch$stretch_number," -  model:",stretch$tracking_behavior," -  [",stretch$start,":",stretch$end,"] length =",stretch$length," ,\n")
   
   
   # 1. prepare data
   X = X %>% dplyr::filter(t %in% stretch$start:stretch$end)
+  GT = GT %>% dplyr::filter(t %in% stretch$start:stretch$end)
+  trust_in_ground_truth = min(GT$trust)
   
   # 2. customize model
-  model = adjust_model(tracking_behavior = stretch$tracking_behavior, X = X, verbose = verbose)
+  model = adjust_model(tracking_behavior = stretch$tracking_behavior, X = X, model = model, is_hmm = is_hmm, verbose = verbose)
   
   # 3. remove any observation that is not part of the model
   X = X %>% select(seq_id, t, all_of(names(model$marg_em_probs)))
   
-  # 4. use res_M as ground_truth
-  GT = res_M %>% filter(state %in% which(R_hsmm$state_names %in% c("M","B")), prob > 0.75, t %in% stretch$start:stretch$end)
-  
   # 4. fit model
   if(fit_model){
     if(verbose) cat("Fitting the model to this stretch\n")
-    model_fit = fit_hsmm(model = model, X = X, ground_truth = GT,  lock_transition = TRUE, lock_sojourn = TRUE, verbose = FALSE)
+    model_fit = fit_hsmm(model = model, X = X, ground_truth = GT, trust_in_ground_truth = trust_in_ground_truth,  lock_transition = TRUE, lock_sojourn = FALSE, verbose = FALSE, N0_emission = 100)
     model = model_fit$model
   }
   
   # 5. decode observations
   if(verbose) cat("Decoding the stretch\n")
-  vit = predict_states_hsmm(X = X, model = model, ground_truth = GT, method = "Viterbi")
-  smoo = predict_states_hsmm(X = X, model = model, ground_truth = GT, method = "FwBw")
+  vit = predict_states_hsmm(X = X, model = model, ground_truth = GT, trust_in_ground_truth = trust_in_ground_truth, method = "Viterbi")
+  smoo = predict_states_hsmm(X = X, model = model, ground_truth = GT, trust_in_ground_truth = trust_in_ground_truth, method = "FwBw")
   
   # return results
   res = smoo$probabilities %>%
@@ -138,216 +244,313 @@ decode_stretch = function(i, stretches, X, res_M, fit_model = FALSE, verbose = F
     left_join(.,vit$state_seq %>% select(seq_id, t, state) %>% mutate(is_on_most_likely_path = TRUE), by = c("seq_id", "t", "state")) %>% 
     mutate(is_on_most_likely_path = is_on_most_likely_path %>% replace_na(FALSE),
            tracking_behavior = stretch$tracking_behavior,
-           stretch_id = stretch$stretch_id)
+           stretch_number = stretch$stretch_number)
   res
 }
 
 
 
-adjust_model = function(tracking_behavior, X, verbose = FALSE){
+adjust_model = function(tracking_behavior, X, model, is_hmm = FALSE, verbose = FALSE){
   if(verbose) cat("Adjusting model to observations\n")
   
-  # we start from the general FAM model
-  model = R_hsmm
-
   # we remove variables that are never observed
   var_names = names(model$marg_em_probs)
   Xmissing = X %>% select(all_of(var_names)) %>% mutate(across(everything(), is.na))
   missing_frequencies = Xmissing %>% summarize(across(everything(), mean))
-  tracking_frequencies = 1-missing_frequencies
+  all_tracking_frequencies = 1-missing_frequencies
+  tracking_frequencies = all_tracking_frequencies
   if(any(tracking_frequencies == 0)){
-    vars = var_names[which(tracking_frequencies == 0)]
+    j = which(tracking_frequencies == 0)
+    vars = var_names[j]
+    tracking_frequencies = tracking_frequencies[-j]
     for(var in vars){
       model$marg_em_probs[[var]] = NULL
     }
   }
+  tracking_frequency = 1 - (apply(Xmissing, 1, prod) %>% mean())
   
   # Do we need to fix the sojourn of Lut ?
-  if(tracking_behavior %in% c("b","bp")) model$sojourn$Lut$d = c(rep(0,10),1,rep(0, length(model$sojourn$Lut$d)-11))
+  if(!is_hmm & (tracking_behavior %in% c("B","BP"))) 
+    model$sojourn$Lut$d = c(rep(0,10),1,rep(0, length(model$sojourn$Lut$d)-11))
   
   # Do we need to fix the sojourn of hE ?
-  if(tracking_behavior %in% c("b","bp","b_tests","no_mucus")) model$sojourn$lE$d = c(rep(0,2),1,rep(0, length(model$sojourn$lE$d)-3))
+  if(!is_hmm & (tracking_behavior %in% c("B","BP","BLH","BT"))) 
+    model$sojourn$hE$d = c(rep(0,2),1,rep(0, length(model$sojourn$hE$d)-3))
   
   # Do we need to modify the transition from hE to lE?
-  if(tracking_behavior %in% c("b")) model$transition["hE","lE"] = 0
+  if(all_tracking_frequencies$mucus > 0)
+    model$transition["hE","lE"] = model$transition["hE","lE"] * all_tracking_frequencies$mucus
   
+  if(tracking_behavior %in% c("BP"))
+    model$transition["hE","lE"] = 0.001
+
+  if(tracking_behavior %in% c("B"))
+    model$transition["hE","lE"] = 0
+  
+
   # Do we need to cancel the transition to Ano?
-  if(!(tracking_behavior %in% c("full","no_mucus"))) model$transition[,"Ano"] = 0
+  if(!(tracking_behavior %in% c("BTM","BT"))) 
+    model$transition[,"Ano"] = 0
   
   model$transition = model$transition/rowSums(model$transition)
   
   # censoring probs
+  p = 1-tracking_frequency
+  q = 1-unlist(tracking_frequencies)
   model$censoring_probs = list(
-    p = rep(0.5, model$J),
-    q = matrix(0.5, ncol = model$J, nrow = length(model$marg_em_probs))
+    p = rep(p, model$J) %>% set_names(model$state_names),
+    q = matrix(q, 
+               ncol = model$J, nrow = length(model$marg_em_probs), 
+               dimnames = list(names(model$marg_em_probs), model$state_names))
   )
-  model$censoring_probs$q[1,] = 0
-  model$censoring_probs$p[model$state_names %in% c("M","Ano","L")] = 0.45
-  model$censoring_probs$p[model$state_names %in% c("AB")] = 0.15
-  model$censoring_probs$p[model$state_names %in% c("PP","BF")] = 0.55
+  # probability of all variables missing
+  model$censoring_probs$p["M"] = min(0.2,p*0.4)
+  model$censoring_probs$p[c("Ano","L")] = min(0.3, p*0.7)
+  model$censoring_probs$p[c("AB")] = 0.2
+  #model$censoring_probs$p[c("PP","BF")] = p+(1-p)*0.1
+  
+  # probability of specific variables missing
+  model$censoring_probs$q["bleeding",] = 0
+  if ("preg" %in% names(model$marg_em_probs)) {
+    model$censoring_probs$q["preg",c("P")] = model$censoring_probs$q["preg","P"]*0.5
+    model$censoring_probs$q["preg",c("Lut","PB1","PL")] = model$censoring_probs$q["preg","Lut"]*0.8
+  }
+  if ("temp" %in% names(model$marg_em_probs)){
+    model$censoring_probs$q["temp","P"] = model$censoring_probs$q["temp","P"]*0.8
+    model$censoring_probs$q["temp","Ano"] = model$censoring_probs$q["temp","Ano"]*0.5
+  }
+  
   
   # specify the model
   model = specify_hsmm(J = model$J, init = model$init, transition = model$transition, 
-                       sojourn = model$sojourn, marg_em_probs = model$marg_em_probs, 
-                       # censoring_probs = NULL,
-                       # censoring_probs = list(
-                       #   p = rep(0,model$J),
-                       #   q = matrix(0.5, ncol = model$J, nrow = length(model$marg_em_probs))
-                       # ),
+                       sojourn = model$sojourn, 
+                       marg_em_probs = model$marg_em_probs, 
                        censoring_probs = model$censoring_probs,
                        state_names = model$state_names, state_colors = model$state_colors)
   
- 
+  
   # return adjusted model
   model
 }
 
 
-stitch_stretches = function(decodings, verbose = FALSE){
+stitch_stretches = function(decodings, X, model, is_hmm = FALSE, fit_model = FALSE, verbose = FALSE){
   if(verbose) cat("Stitching stretches\n")
   
-  decoding = decodings %>% 
+  decodings = 
+    decodings %>% 
     arrange(seq_id, t, state) %>% 
     group_by(seq_id, t, state) %>% 
-    mutate(is_transition = n() > 1)
-  
-  if(!any(decoding$is_transition)) return(decodings %>%  mutate(common_overlap = NA))
-  
-  decoding_outside_transitions = decoding %>%  filter(!is_transition) %>% select(-is_transition)
-  
-  decoding_in_transitions = 
-    decoding %>% filter(is_transition) %>% 
-    group_by(seq_id, t) %>% 
-    mutate(transition_id = mean(stretch_id),
-           tracking_behavior = str_c(sort(unique(tracking_behavior)), collapse = " - ")) %>% 
-    group_by(seq_id, transition_id) %>% 
-    mutate(transition_start = min(t),
-           transition_end = max(t))
-  
-  overlaps_in_transitions = 
-    decoding_in_transitions %>% 
-    filter(is_on_most_likely_path) %>% 
-    group_by(seq_id, transition_id, t) %>% 
-    summarize(same_state = (length(unique(state)) == 1),
-              .groups = "drop") %>% 
-    filter(same_state) %>% 
-    group_by(seq_id, transition_id) %>% 
-    summarize(overlap_start = suppressWarnings(min(t)),
-              overlap_end = suppressWarnings(max(t)), 
-              .groups = "drop")
-  
-  most_likely_path_in_transitions = 
-    decoding_in_transitions %>% 
-    filter(is_on_most_likely_path) %>%  
-    select(seq_id, t, state, stretch_id, transition_id)  %>% 
-    left_join(., overlaps_in_transitions, by = c("seq_id", "transition_id")) %>% 
-    group_by(seq_id, t) %>% 
-    mutate(selected_stretch = ifelse(t <= overlap_end, min(stretch_id), max(stretch_id)),
-           state = ifelse(is.na(selected_stretch), NA, state),
-           selected_stretch = selected_stretch %>% replace_na(min(stretch_id))) %>% 
-    filter(stretch_id == selected_stretch) %>% 
-    select(seq_id, t, state) %>% 
-    mutate(is_on_most_likely_path = TRUE,
-           common_overlap = ifelse(any(is.na(state)), FALSE, TRUE))
-  
-  decoding_in_transitions = decoding_in_transitions %>% 
-    select(seq_id, t, state, prob, tracking_behavior, transition_id) %>% 
-    rename(stretch_id = transition_id) %>% 
-    group_by(seq_id, t, state, tracking_behavior, stretch_id) %>% 
-    summarize(prob = mean(prob), .groups = "drop") %>% 
-    left_join(. , most_likely_path_in_transitions, by = c("seq_id","t","state")) %>% 
-    group_by(seq_id, stretch_id) %>% 
-    mutate(is_on_most_likely_path = is_on_most_likely_path %>% replace_na(FALSE),
-           common_overlap = any(common_overlap, na.rm = TRUE))
-  
-  decoding = bind_rows(decoding_outside_transitions %>% mutate(common_overlap = NA),
-                       decoding_in_transitions) %>% 
+    mutate(is_transition = n() > 1,
+           transition_number = mean(stretch_number)) %>% 
     ungroup()
   
+  if(!any(decodings$is_transition)) return(decodings)
+  
+  
+  # there might be discrepancies within the transitions 
+  # if one of them does not have "menses" in their most likely path
+  # so, for each transition, we check if "menses" is on the most likely path 
+  # for both stretch on each side of the transition
+  
+  transitions = 
+    decodings %>% 
+    filter(is_transition, is_on_most_likely_path) %>% 
+    group_by(seq_id, transition_number, stretch_number) %>% 
+    summarize(any_menses = any(state == 1), .groups = "drop") %>% 
+    group_by(seq_id, transition_number) %>% 
+    summarize(has_menses_in_both_stretches = all(any_menses), .groups = "drop") %>% 
+    mutate(needs_fixing = !has_menses_in_both_stretches)
+  
+  decoding_outside_transitions = 
+    decodings %>% 
+    filter(!is_transition) %>% 
+    mutate(needs_fixing = FALSE)
+  
+  decoding_in_transitions = 
+    decodings %>% 
+    filter(is_transition) %>% 
+    left_join(., 
+              transitions %>% 
+                select(seq_id, transition_number, needs_fixing),
+              by = c("seq_id", "transition_number")) %>% 
+    group_by(seq_id, t, transition_number, state) %>% 
+    summarize(prob = mean(prob),
+              tracking_behavior = str_c(unique(tracking_behavior), collapse = "-"),
+              needs_fixing = any(needs_fixing),
+              .groups = "drop")  %>% 
+    arrange(seq_id, t, -prob) %>%
+    group_by(seq_id, t) %>% 
+    mutate(is_on_most_likely_path = c(TRUE, rep(FALSE, n()-1))) %>% 
+    ungroup()
+  
+  decoding =
+    bind_rows(
+      decoding_outside_transitions,
+      decoding_in_transitions
+    ) %>% 
+    mutate(stretch_number = transition_number) %>% 
+    arrange(seq_id, t, state) %>% 
+    select(-is_transition, -transition_number)
+  
+  if(any(decoding$needs_fixing, na.rm = TRUE)) 
+    decoding = fix_stitches(decoding, X, model, is_hmm, fit_model, verbose)
+  
+  decoding  = decoding %>%  select(-needs_fixing)
   decoding
 }
 
 
-fix_stitches = function(decoding, X, res_M = res_M, fit_models = FALSE, verbose = FALSE){
+fix_stitches = function(decoding, X, model, is_hmm = FALSE, fit_model = FALSE, verbose = FALSE){
   
   if(verbose) cat("Fixing stitches \n")
   
-  # 1. Identify if there are any overlap problems
-  any_overlap_problem = any(!decoding$common_overlap, na.rm = TRUE)
+  # 1. Identify the new stretches that need to be re-decoded.
+  to_fix = 
+    decoding %>% 
+    filter(needs_fixing) %>% 
+    select(seq_id, t, stretch_number, tracking_behavior) %>% 
+    distinct() %>% 
+    group_by(seq_id, stretch_number, tracking_behavior) %>% 
+    summarize(stretch_start = min(t),
+              stretch_end = max(t),
+              .groups = "drop") 
   
-  # 2. If no overlap problem, return decoding as is.
-  if(!any_overlap_problem) return(decoding)
+  # 2. extend the stretch 
+  # from the last menses of the previous stretch
+  # to the first menses of the next stretch
   
-  # 3. If there are overlap problems, identify the new stretches that need to be decoded.
-  
-  cycles = decoding %>% 
+  cycles = 
+    decoding %>% 
     filter(is_on_most_likely_path) %>% 
     arrange(seq_id, t) %>% 
-    mutate(first_cycleday = (prob > 0.75) & (state == 1) & ((lag(state) != 1) | (t == 1)),
-           cycle_nb = cumsum(first_cycleday)) %>%  
-    filter(first_cycleday, prob > 0.75) %>% 
-    select(seq_id, t, stretch_id, cycle_nb)
+    mutate(day_1 = (prob > 0.75) & (state == 1) & ((lag(state) != 1) | (t == 1)),
+           cycle_number = cumsum(day_1),
+           cycle_start = t) %>%  
+    filter(day_1) %>% 
+    select(seq_id, cycle_start, stretch_number, cycle_number)
   
-  overlaps_to_fix = decoding %>% 
-    filter(!common_overlap) %>% 
-    select(seq_id, t, stretch_id, common_overlap, tracking_behavior) %>% 
-    distinct() %>% 
-    group_by(seq_id, stretch_id, tracking_behavior) %>% 
-    summarize(overlap_start = min(t),
-              overlap_end = max(t),
-              .groups = "drop") %>% 
-    mutate(o_id = row_number())
   
   stretches_to_fix = purrr::map_dfr(
-    .x = overlaps_to_fix$o_id,
-    .f = function(o){
-      cbind(
-        overlaps_to_fix %>% filter(o_id == o) %>%  select(seq_id, stretch_id, o_id, tracking_behavior) %>% 
-          mutate(tracking_behavior = tracking_behavior %>% 
-                   str_split_fixed(.," - ", 2) %>% 
-                   factor(., levels = T_hsmm$state_names) %>%  
-                   sort(., decreasing = TRUE) %>% 
-                   head(1) %>% 
-                   as.character()
-                   ),
-        cycles %>% filter(t < overlaps_to_fix$overlap_start[o]) %>% 
-          summarize(start = suppressWarnings(max(t))) %>% mutate(start = ifelse(is.infinite(start), 1, start)),
-        cycles %>% filter(t > overlaps_to_fix$overlap_end[o]) %>% 
-          summarize(end = suppressWarnings(min(t))) %>%  mutate(end = ifelse(is.infinite(end), max(X$t), end))
-      )
+    .x = 1:nrow(to_fix),
+    .f = function(i){
+      prev_cycles = 
+        cycles %>% 
+        filter(cycle_start < to_fix$stretch_start[i]) %>% 
+        slice_tail(n = 1)
+      min_t = max(prev_cycles$cycle_start, 1, na.rm = TRUE)
+      
+      next_cycles =
+        cycles %>% 
+        filter(cycle_start > to_fix$stretch_end[i]) %>% 
+        slice_head(n = 1)
+      max_t = min(next_cycles$cycle_start + 5, max(X$t), na.rm = TRUE)
+      
+      data.frame(
+        seq_id = to_fix$seq_id[i],
+        stretch_number = to_fix$stretch_number[i], 
+        start = min_t, end = max_t, length = max_t - min_t + 1)
     }
   )
   
-  # 3b. We make sure each stretch is unique
-  if(nrow(stretches_to_fix) > nrow(stretches_to_fix %>% select(seq_id, start, end) %>% distinct())){
-    stretches_to_fix = stretches_to_fix %>% 
-      mutate(tracking_behavior_num = tracking_behavior %>% factor(., levels = T_hsmm$state_names) %>%  as.numeric()) %>% 
-      arrange(seq_id, start, end, tracking_behavior_num) %>% 
-      group_by(seq_id, start, end) %>% 
-      summarize(tracking_behavior_num = max(tracking_behavior_num),
-                stretch_id = max(stretch_id),
-                o_id = max(o_id),
-                .groups = "drop") %>% 
-      mutate(tracking_behavior = T_hsmm$state_names[tracking_behavior_num]) %>% 
-      select(-tracking_behavior_num)
-  }
+  # 3. We make sure each stretch is unique & that there isn't any overlap
+  stretches_to_fix = 
+    stretches_to_fix %>% 
+    mutate(
+      condition = !is.na(lag(end)) & (lag(end) >= start),
+      start = ifelse(condition, lag(start), start),
+    ) %>% 
+    group_by(seq_id, start) %>% 
+    summarize(
+      end = max(end),
+      stretch_number = min(stretch_number),
+      .groups = "drop") %>% 
+    mutate(
+      length = end - start + 1,
+      group = str_c(seq_id, "_",stretch_number)
+      )
+  
+  # 4. We determine the tracking behavior in these stretches
+  X_in_stretches = 
+    X %>% 
+    inner_join(
+      ., 
+      stretches_to_fix[rep(1:nrow(stretches_to_fix), stretches_to_fix$length),] %>% 
+        group_by(stretch_number) %>% 
+        mutate(t = start + row_number() - 1) %>% 
+        select(seq_id, t, stretch_number, group),
+      by = c("seq_id", "t")
+    ) %>%
+    inner_join(
+      .,
+      cycles %>%  select(seq_id, cycle_start, cycle_number) %>%  dplyr::rename(t = cycle_start),
+      by = c("seq_id","t")
+    )
+  
+  tracking_in_stretches_to_fix = 
+    compute_tracking_behavior(X_in_stretches)
+  stretches_to_fix = 
+    stretches_to_fix %>% 
+    left_join(
+      .,
+      tracking_in_stretches_to_fix %>% select(group, tracking_behavior), 
+      by = "group") %>% 
+    select(-group)
+  
+  GT = 
+    bind_rows(
+      stretches_to_fix %>%  mutate(state = 1, t = start),
+      stretches_to_fix %>%  mutate(state = 1, t = end),
+    ) %>% 
+    select(seq_id, t, state) %>% 
+    mutate(trust = 1)
+  
   
   # 4. For each stretch, decode with decode_stretch() function
   decodings_in_stretches_to_fix =
-    purrr::map_dfr(.x = 1:nrow(stretches_to_fix), 
-                   .f = decode_stretch, 
-                   stretches = stretches_to_fix, X = X, 
-                   res_M = res_M,
-                   fit_model = fit_models,
-                   verbose = verbose)
-
+    decode_stretches(X = X, GT = GT, 
+                     model = model, is_hmm = is_hmm, fit_model = fit_model,
+                     stretches = stretches_to_fix, 
+                     verbose = verbose)
+  
+  
   # 5. Remove the time-points that are overlapping with the new stretches, append the new decodings (from step 4)
   decoding = decoding %>% filter(!(t %in% decodings_in_stretches_to_fix$t)) %>% 
     bind_rows(., decodings_in_stretches_to_fix)
   
   # 6. Sort by seq_id, t, state
   decoding = decoding %>% arrange(seq_id, t, state)
-    
+  
   # 7. Return results
   decoding
+}
+
+
+
+
+decode_without_adaptation = function(X, model, fit_model, verbose = FALSE){
+  
+  if(fit_model){
+    if(verbose) cat("fitting model to observations\n")
+    fitted_res = fit_hsmm(model = model, X = X, lock_transition = TRUE, N0_emission = 100)
+    model = fitted_res$model
+  }
+  
+  if(verbose) cat("predicting most likely sequence\n")
+  vit = predict_states_hsmm(model = R_hsmm, X = X, method = "Viterbi")
+  if(verbose) cat("predicting state probabilities at each time step\n")
+  fwbw = predict_states_hsmm(model = R_hsmm, X = X, method = "FwBw")
+  
+  if(verbose) cat("preparing output\n")
+  vit$state_seq %>% 
+    select(seq_id, t, state) %>% 
+    left_join(
+      fwbw$probabilities %>%  
+        select(seq_id, t, state, state_prob) %>% 
+        rename(prob = state_prob),
+      by = c("seq_id","t","state")
+    ) %>% 
+    mutate(tracking_behavior = "unspecified",
+           stretch_id = 1)
+  
 }

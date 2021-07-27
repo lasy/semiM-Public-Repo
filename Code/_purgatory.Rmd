@@ -1,0 +1,959 @@
+---
+title: "purgatory"
+author: "Laura Symul"
+date: "5/21/2021"
+output: html_document
+---
+
+
+
+```{r echo = FALSE, eval = FALSE}
+
+
+Xi = X %>%  filter(seq_id == "e53b025d055be6a2931093247f9e0a9ec366bdfd")  # 48fc5b2456bdf01c4c3d000c2b41fe9f0bd2eaf0
+
+
+res = get_most_likely_sequence_with_prob(X = Xi, fit_models = FALSE, verbose = TRUE)
+
+res_with_fit =  get_most_likely_sequence_with_prob(X = Xi, fit_models = TRUE, verbose = TRUE)
+
+plot_hsmm_seq(X = Xi %>% left_join(., res %>% select(seq_id, t, state, prob) %>% rename(state_decoded = state, prob_state_decoded = prob), by = c("seq_id","t")),
+              model = R_hsmm)
+
+plot_hsmm_seq(X = Xi %>% left_join(., res_with_fit %>% select(seq_id, t, state, prob) %>% rename(state_decoded = state, prob_state_decoded = prob), by = c("seq_id","t")),
+              model = R_hsmm)
+
+
+vit = predict_states_hsmm(model = R_hsmm, X = Xi, method = "viterbi")
+
+vit_M = predict_states_hsmm(model = M_hsmm, X = Xi %>%  select(seq_id, t, bleeding), method = "viterbi")
+smoo_M = predict_states_hsmm(model = M_hsmm, X = Xi %>%  select(seq_id, t, bleeding), method = "smoothed")
+
+plot_hsmm_seq_expanded(X = Xi %>% left_join(., vit_M$state_seq %>% select(seq_id, t, state) %>% rename(state_decoded = state), by = c("seq_id","t")),
+                       model = R_hsmm)
+
+
+plot_hsmm_seq_expanded(X = Xi %>% left_join(., smoo_M$state_seq %>% select(seq_id, t, state) %>% rename(state_decoded = state), by = c("seq_id","t")),
+                       model = R_hsmm)
+
+res_M = vit_M$state_seq %>%  select(seq_id, t, state) %>% left_join(., smoo_M$state_probs %>% select(seq_id, t, state, posterior, local) %>% rename(prob = posterior, b = local), by = c("seq_id", "t", "state") ) %>% mutate(b = 2.5*b) %>% rename(state_vit_M = state, prob_state_vit_M = prob) 
+
+
+plot_hsmm_seq_expanded(X = Xi %>% left_join(., res_M, by = c("seq_id","t")),
+                       model = R_hsmm)
+
+GT_from_M = vit_M$state_seq %>% select(seq_id, t, state) %>% filter(state %in% which(R_hsmm$state_names %in% c("M","B")))
+
+vit_GT = predict_states_hsmm(model = R_hsmm, X = Xi, method = "viterbi", ground_truth = GT_from_M, trust_in_ground_truth = 0.75)
+
+
+plot_hsmm_seq_expanded(X = Xi %>% left_join(., vit_GT$state_seq %>% select(seq_id, t, state) %>% rename(state_decoded = state), by = c("seq_id","t")),
+                       model = R_hsmm)
+
+
+```
+
+
+
+```{r decoding-app-data-with-fit}
+
+X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
+ML = read_feather(path = paste0(IO$output_data, "ML.feather"))
+X = X %>% filter(seq_id %in% unique(ML$seq_id))
+
+RES.file = paste0(IO$output_data, "RES_app_data_fitted.feather")
+
+if(rerun_from_here | !file.exists(RES.file)){
+  
+  tic()
+  RES = purrr::map_dfr(.x = unique(X$seq_id),
+                       .f = function(sid){
+                         cat(sid, "\n")
+                         get_most_likely_sequence_with_prob(
+                           X = X %>% filter(seq_id == sid), 
+                           R_model = R_hsmm,
+                           M_model = M_hsmm,
+                           T_model = T_hsmm,
+                           fit_models = TRUE,
+                           verbose = FALSE)
+                       }
+  )
+  toc()
+  
+  write_feather(RES, path = RES.file)
+}
+
+```
+
+
+### Decoding with the HMM
+
+
+```{r decoding-app-data-with-hmm}
+
+RES.hmm.file = paste0(IO$output_data, "RES_app_data_hmm.feather")
+
+if(rerun_from_here | !file.exists(RES.hmm.file)){
+  
+  tic()
+  RES.hmm = purrr::map_dfr(.x = unique(X$seq_id),
+                           .f = function(sid){
+                             cat(sid, "\n")
+                             get_most_likely_sequence_with_prob(
+                               X = X %>% filter(seq_id == sid), 
+                               R_model = R_hmm, # HMM here
+                               M_model = M_hsmm,
+                               T_model = T_hsmm,
+                               is_hmm = TRUE,
+                               fit_models = FALSE,
+                               verbose = FALSE)
+                           }
+  )
+  toc()
+  
+  write_feather(RES.hmm, path = RES.hmm.file)
+}
+
+```
+
+
+```{r decoding-app-data-with-hmm-fitting}
+
+RES.hmm.file = paste0(IO$output_data, "RES_app_data_hmm_fitted.feather")
+
+if(rerun_from_here | !file.exists(RES.hmm.file)){
+  
+  tic()
+  RES.hmm = purrr::map_dfr(.x = unique(X$seq_id),
+                           .f = function(sid){
+                             cat(sid, "\n")
+                             get_most_likely_sequence_with_prob(
+                               X = X %>% filter(seq_id == sid), 
+                               R_model = R_hmm, # HMM here
+                               M_model = M_hsmm,
+                               T_model = T_hsmm,
+                               is_hmm = TRUE,
+                               fit_models = TRUE,
+                               verbose = FALSE)
+                           }
+  )
+  toc()
+  
+  write_feather(RES.hmm, path = RES.hmm.file)
+  
+}
+
+```
+
+
+
+
+### Decoding with the weakly specified HSMM
+
+
+```{r decoding-app-data-with-bad-hsmm}
+
+RES.bad_hsmm.file = paste0(IO$output_data, "RES_app_data_bad_hsmm.feather")
+
+if(rerun_from_here | !file.exists(RES.bad_hsmm.file)){
+  
+  tic()
+  RES.bad_hsmm = purrr::map_dfr(.x = unique(X$seq_id),
+                                .f = function(sid){
+                                  cat(sid, "\n")
+                                  get_most_likely_sequence_with_prob(
+                                    X = X %>% filter(seq_id == sid), 
+                                    R_model = R_bad_hsmm, # bad HSMM here
+                                    M_model = M_hsmm,
+                                    T_model = T_hsmm,
+                                    is_hmm = FALSE,
+                                    fit_models = FALSE,
+                                    verbose = FALSE)
+                                }
+  )
+  toc()
+  
+  write_feather(RES.bad_hsmm, path = RES.bad_hsmm.file)
+}
+
+```
+
+
+```{r decoding-app-data-with-bad-hsmm-fitted}
+
+RES.bad_hsmm.file = paste0(IO$output_data, "RES_app_data_bad_hsmm_fitted.feather")
+
+if(rerun_from_here | !file.exists(RES.bad_hsmm.file)){
+  
+  tic()
+  RES.bad_hsmm = purrr::map_dfr(.x = unique(X$seq_id),
+                                .f = function(sid){
+                                  cat(sid, "\n")
+                                  get_most_likely_sequence_with_prob(
+                                    X = X %>% filter(seq_id == sid), 
+                                    R_model = R_bad_hsmm, # bad HSMM here
+                                    M_model = M_hsmm,
+                                    T_model = T_hsmm,
+                                    is_hmm = FALSE,
+                                    fit_models = TRUE,
+                                    verbose = FALSE)
+                                }
+  )
+  toc() # 5 minutes
+  
+  write_feather(RES.bad_hsmm, path = RES.bad_hsmm.file)
+}
+
+```
+
+
+
+
+### Decoding with the HSMM without the hierarchical structure
+
+
+```{r decoding-app-data-without-hierarchy}
+
+RES.no_hierarchy.file = paste0(IO$output_data, "RES_app_data_no_hier_hsmm.feather")
+
+if(rerun_from_here | !file.exists(RES.no_hierarchy.file)){
+  
+  
+  tic()
+  vit = predict_states_hsmm(model = R_hsmm, X = X, method = "Viterbi")
+  toc()
+  
+  tic()
+  fwbw = predict_states_hsmm(model = R_hsmm, X = X, method = "FwBw")
+  toc() #41 sec
+  
+  RES.no_hierarchy = 
+    vit$state_seq %>% 
+    select(seq_id, t, state) %>% 
+    left_join(
+      fwbw$probabilities %>%  
+        select(seq_id, t, state, state_prob) %>% 
+        rename(prob = state_prob),
+      by = c("seq_id","t","state")
+    ) %>% 
+    mutate(tracking_behavior = "unspecified",
+           stretch_id = 1)
+  
+  write_feather(RES.no_hierarchy, path = RES.no_hierarchy.file)
+}
+
+```
+
+
+
+```{r decoding-app-data-without-hierarchy-fitting-the-model}
+
+RES.no_hierarchy.fitted.file = paste0(IO$output_data, "RES_app_data_no_hier_hsmm_fitted.feather")
+
+if(rerun_from_here | !file.exists(RES.no_hierarchy.fitted.file)){
+  
+  
+  ## fitting
+  tic()
+  fit_res = fit_hsmm(model = R_hsmm, X = X, lock_transition = TRUE, N0 = 100)
+  toc() # 99 sec
+  # plot_hsmm_fit_status(fit_res)
+  
+  ## decoding
+  
+  tic()
+  vit = predict_states_hsmm(model = fit_res$model, X = X, method = "Viterbi")
+  toc() # 265.299
+  
+  tic()
+  fwbw = predict_states_hsmm(model = fit_res$model, X = X, method = "FwBw")
+  toc() #39 sec
+  
+  ## Results
+  
+  RES.no_hierarchy.fitted = 
+    vit$state_seq %>% 
+    select(seq_id, t, state) %>% 
+    left_join(
+      fwbw$probabilities %>%  
+        select(seq_id, t, state, state_prob) %>% 
+        rename(prob = state_prob),
+      by = c("seq_id","t","state")
+    ) %>% 
+    mutate(tracking_behavior = "unspecified",
+           stretch_id = 1)
+  
+  write_feather(RES.no_hierarchy.fitted, path = RES.no_hierarchy.fitted.file)
+}
+
+```
+
+
+
+```{r predicting-creating-input}
+
+# for each user
+# for each consecutive stretch
+# we keep the 4 first cycles (= training cycles)
+
+input = data.frame()
+input_baseline = data.frame()
+output = data.frame() # for cycle length prediction
+fifth_cycle = data.frame()
+
+for(u in unique(df$seq_id)){
+  cat(u, "\t")
+  dfu = df %>% filter(seq_id == u)
+  for(s in unique(dfu$cons_stretch_id)){
+    dfs = dfu %>% filter(cons_stretch_id == s)
+    n_cycles = length(unique(dfs$cycle_number))
+    first_cycle = min(dfs$cycle_number)
+    for(cn in first_cycle:(first_cycle+n_cycles-5)){
+      dfc = dfu %>% filter(cycle_number %in% cn:(cn+3))
+      this_input = X %>%  
+        filter(seq_id == u,
+               t >= min(dfc$t),
+               t <= max(dfc$t)+5) %>%  # we add 5 days so that the next period is included
+        rename(o_seq_id = seq_id) %>% 
+        mutate(seq_id = str_c(o_seq_id, "_",s,"_",cn))
+      
+      input = bind_rows(input, this_input)
+      
+      this_input_baseline = dfc %>% 
+        select(seq_id, t, cycle_start, cycle_number, cycle_length) %>% 
+        filter(cycle_start) %>% 
+        rename(o_seq_id = seq_id) %>% 
+        mutate(seq_id = str_c(o_seq_id, "_",s,"_",cn))
+      
+      input_baseline = bind_rows(input_baseline, this_input_baseline)
+      
+      dfc5 = dfu %>% filter(cycle_number %in% (cn+4))
+      this_fifth_cycle = X %>% 
+        filter(seq_id == u,
+               t >= min(dfc5$t),
+               t <= max(dfc5$t)) %>%
+        rename(o_seq_id = seq_id) %>% 
+        mutate(seq_id = str_c(o_seq_id, "_",s,"_",cn))
+      
+      fifth_cycle = bind_rows(fifth_cycle, this_fifth_cycle)
+
+      this_output = dfu %>%  filter(cycle_number == cn+4) %>% 
+        select(seq_id, t, cycle_number, cycle_length) %>%
+        group_by(seq_id, cycle_number, cycle_length) %>% 
+        summarize(t_cycle_end = max(t),
+                  t_cycle_start = min(t),
+                  .groups = "drop") %>% 
+        rename(o_seq_id = seq_id) %>% 
+        mutate(seq_id = str_c(o_seq_id, "_",s,"_",cn))
+      output = bind_rows(output, this_output)
+    }
+  }
+}
+
+cat("\n")
+
+```
+
+
+
+
+
+# Decoding
+
+
+
+
+Loading data and formatting results
+
+```{r perf-real-loading-data}
+
+X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
+RES = read_feather(path = paste0(IO$output_data, "RES_app_data.feather"))
+ML = read_feather(path = paste0(IO$output_data, "ML.feather")) %>% rename(state_GT = state) 
+
+```
+
+
+```{r perf-real-ML-XP}
+
+XP = full_join(X, RES, by = c("seq_id", "t")) %>% 
+  left_join(., ML, by = c("seq_id", "t") ) 
+
+write_feather(XP, path = paste0(IO$output_data, "decoding_results_app_data.feather"))
+
+```
+
+__Overall accuracy__
+
+
+```{r perf-real-Accuracies}
+
+Accuracy = mean(XP$state == XP$state_GT, na.rm = TRUE)
+Accuracy
+
+Weighted_Accuracy = weighted.mean(x = XP$state == XP$state_GT, w = XP$prob, na.rm = TRUE)
+Weighted_Accuracy
+
+
+```
+
+__Confusion matrices__
+
+```{r perf-real-conf-mat}
+
+confusion_matrix_df = XP %>% 
+  filter(!is.na(state), !is.na(state_GT)) %>% 
+  group_by(state_GT, state) %>% 
+  summarize(n = n(),
+            wn = sum(prob),
+            .groups = "drop") %>% 
+  group_by(state_GT) %>% 
+  mutate(tot = sum(n),
+         wtot = sum(wn),
+         .groups = "drop") %>% 
+  ungroup() %>% 
+  mutate(perc = n/tot,
+         wperc = wn/wtot) %>% 
+  select(-n, -wn, -tot, -wtot) %>% 
+  pivot_longer(cols = c("perc","wperc"), names_to = "type", values_to = "fraction") %>% 
+  mutate(type = ifelse(type == "perc", "Accuracy","Weighted Accuracy"),
+         GT_state_name = R_hsmm$state_names[state_GT] %>%  factor(., levels = R_hsmm$state_names),
+         decoded_state_name = R_hsmm$state_names[state] %>%  factor(., levels = R_hsmm$state_names))
+```
+
+
+```{r perf-real-conf-mat-viz, fig.width=10, fig.height=4.5, fig.cap="Confusion matrix between manually labelled and decoded states."}
+
+g_conf_mat = 
+  ggplot(
+    confusion_matrix_df, 
+    aes(x = decoded_state_name, y = GT_state_name, fill = fraction)) +
+  geom_tile() + 
+  facet_grid(. ~ type) +
+  scale_fill_gradient("State-specific accuracy", low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+g_conf_mat
+
+save(g_conf_mat, file = "../Data/plots/g_conf_mat.Rdata")
+  
+```
+
+
+
+__Decoded sequences__
+
+```{r perf-real-sequences, warning = FALSE, fig.width=10, fig.height=3}
+
+ordered_sequences =
+  XP %>% 
+  group_by(seq_id) %>% 
+  filter(seq_id %in% unique(RES$seq_id),
+         !is.na(state_GT)) %>% 
+  summarize(
+    n_wrong = sum(state != state_GT),
+    accuracy = mean(state == state_GT),
+    .groups = "drop"
+  ) %>% 
+  arrange(-n_wrong)
+
+for(i in 1:nrow(ordered_sequences)){ # nrow(ordered_sequences) # length(unique(RES$seq_id))
+  uid = ordered_sequences$seq_id[i]  # unique(RES$seq_id)[i]
+  this_user_XP = XP %>% filter(seq_id == uid) %>% 
+    rename(state_decoded = state,
+           state_prob_decoded = prob)
+  
+  plot_hsmm_seq(X = this_user_XP, model = R_hsmm, title = uid,
+                compact_view = TRUE, 
+                add_color_legend_in_compact_view = FALSE) %>%  
+    print() 
+
+}
+
+
+
+
+```
+
+
+
+## On Kindara data (HMM decoding)
+
+Loading data and formatting results
+
+```{r perf-real-loading-data}
+
+X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
+RES.hmm = read_feather(path = paste0(IO$output_data, "RES_app_data_hmm.feather"))
+ML = read_feather(path = paste0(IO$output_data, "ML.feather")) %>% rename(state_GT = state) 
+
+```
+
+
+```{r perf-real-ML-XP}
+
+
+XP.HMM = full_join(X, RES.hmm, by = c("seq_id", "t")) %>% 
+  left_join(., ML, by = c("seq_id", "t") ) 
+
+write_feather(XP.HMM, path = paste0(IO$output_data, "decoding_results_app_data_with_HMM.feather"))
+
+```
+
+__Overall accuracy__
+
+
+```{r perf-real-Accuracies}
+
+Accuracy.HMM = mean(XP.HMM$state == XP.HMM$state_GT, na.rm = TRUE)
+Accuracy.HMM
+
+Weighted_Accuracy.HMM = weighted.mean(x = XP.HMM$state == XP.HMM$state_GT, w = XP.HMM$prob, na.rm = TRUE)
+Weighted_Accuracy.HMM
+
+
+```
+
+__Confusion matrices__
+
+```{r perf-real-conf-mat}
+
+confusion_matrix_df.HMM = XP.HMM %>% 
+  filter(!is.na(state), !is.na(state_GT)) %>% 
+  group_by(state_GT, state) %>% 
+  summarize(n = n(),
+            wn = sum(prob),
+            .groups = "drop") %>% 
+  group_by(state_GT) %>% 
+  mutate(tot = sum(n),
+         wtot = sum(wn),
+         .groups = "drop") %>% 
+  ungroup() %>% 
+  mutate(perc = n/tot,
+         wperc = wn/wtot) %>% 
+  select(-n, -wn, -tot, -wtot) %>% 
+  pivot_longer(cols = c("perc","wperc"), names_to = "type", values_to = "fraction") %>% 
+  mutate(type = ifelse(type == "perc", "Accuracy","Weighted Accuracy"),
+         GT_state_name = R_hsmm$state_names[state_GT] %>%  factor(., levels = R_hsmm$state_names),
+         decoded_state_name = R_hsmm$state_names[state] %>%  factor(., levels = R_hsmm$state_names))
+```
+
+
+```{r perf-real-conf-mat-viz, fig.width=10, fig.height=4.5, fig.cap="Confusion matrix between manually labelled and decoded states."}
+
+g_conf_mat.HMM = 
+  ggplot(
+    confusion_matrix_df.HMM, 
+    aes(x = decoded_state_name, y = GT_state_name, fill = fraction)) +
+  geom_tile() + 
+  facet_grid(. ~ type) +
+  scale_fill_gradient("State-specific accuracy", low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+g_conf_mat.HMM
+
+save(g_conf_mat.HMM, file = "../Data/plots/g_conf_mat_HMM.Rdata")
+  
+```
+
+
+
+
+__Decoded sequences__
+
+```{r perf-real-sequences-HMM, warning = FALSE, fig.width=10, fig.height=3}
+
+ordered_sequences.HMM =
+  XP.HMM %>% 
+  group_by(seq_id) %>% 
+  filter(seq_id %in% unique(RES$seq_id),
+         !is.na(state_GT)) %>% 
+  summarize(
+    n_wrong = sum(state != state_GT),
+    accuracy = mean(state == state_GT),
+    .groups = "drop"
+  ) %>% 
+  arrange(-n_wrong)
+
+for(i in 1:nrow(ordered_sequences.HMM)){ # nrow(ordered_sequences) # length(unique(RES$seq_id))
+  uid = ordered_sequences.HMM$seq_id[i]  # unique(RES$seq_id)[i]
+  this_user_XP = XP.HMM %>% filter(seq_id == uid) %>% 
+    rename(state_decoded = state,
+           state_prob_decoded = prob)
+  
+  plot_hsmm_seq(X = this_user_XP, model = R_hsmm, title = uid,
+                compact_view = TRUE, 
+                add_color_legend_in_compact_view = FALSE) %>%  
+    print() 
+
+}
+
+```
+
+
+
+## Cycle and pregnancy durations
+
+
+```{r 4-cycle-and-pregnancy-durations}
+
+identify_cycles_and_pregnancies = function(RES){
+  RES %>% 
+    arrange(seq_id, t) %>% 
+    filter(state %in% c(1, 12, 17), # we keep the menses, losses and births
+           prob >= 0.7) %>% 
+    group_by(seq_id) %>% 
+    mutate(new_event = ((t-1) != lag(t)) %>% replace_na(TRUE)) %>% 
+    filter(new_event) %>% 
+    select(-new_event) %>% 
+    mutate(duration = t - lag(t),
+           type = 
+             case_when(
+               (state == 1) & (lag(state) == 1) ~ "cycle",
+               (state == 1) & (lag(state) == 17) ~ "post-partum",
+               (state == 1) & (lag(state) == 12) ~ "post-loss",
+               (state == 17) ~ "pregnancy with birth",
+               (state == 12) ~ "pregnancy with loss",
+               TRUE ~ "undefined")
+    ) %>% 
+    select(seq_id, t, type, duration, tracking_behavior) %>% 
+    ungroup()
+}
+
+C_hsmm = identify_cycles_and_pregnancies(RES = RES)
+C_hmm = identify_cycles_and_pregnancies(RES = RES.hmm)
+
+C_both = bind_rows(C_hsmm %>% mutate(model = "hsmm"),
+                   C_hmm %>% mutate(model = "hmm"))
+
+g_cycles = 
+  ggplot(C_both %>%  
+           filter(type == "cycle",
+                  duration < 100), 
+         aes(x = duration, fill = model)) +
+  geom_histogram(position = "identity", alpha = 0.5, binwidth = 1) +
+  scale_x_continuous(breaks = seq(0,100,by = 7)) +
+  theme(legend.position = "none") +
+  xlab("duration (days)") +
+  ggtitle("Cycles")
+
+g_pregnancies = 
+  ggplot(C_both %>%  
+           filter(type %in% c("pregnancy with loss","pregnancy with birth"),
+                  duration < 500), 
+         aes(x = duration/30.5, fill = model)) +
+  geom_histogram(position = "identity", alpha = 0.5, binwidth = 0.2) +
+  facet_grid(type ~ ., scales = "free") +
+  scale_x_continuous(breaks = 1:12) +
+  xlab("time since last menses (months)") +
+  theme(legend.position = "bottom") +
+  ggtitle("Pregnancies")
+
+ggarrange(
+  g_cycles, g_pregnancies,
+  ncol = 1,
+  heights = c(1,2)
+)
+
+```
+
+## Luteal phase durations
+
+
+
+```{r 4-luteal-phase-durations}
+
+identify_luteal_phases = function(RES){
+  RES %>% 
+    arrange(seq_id, t) %>% 
+    group_by(seq_id) %>% 
+    mutate(is_end_of_luteal_phase = (state == 7) & (lead(state) == 1)) %>% 
+    filter(state == 5 | is_end_of_luteal_phase) %>%
+    mutate(duration = t - lag(t),
+           is_luteal_phase = (state == 7) & (lag(state) == 5),
+           confident_ovulation_estimate = (lag(prob) >= 0.5)) %>% 
+    filter(is_luteal_phase) %>% 
+    ungroup() %>% 
+    select(seq_id, t, duration, confident_ovulation_estimate, tracking_behavior)
+}
+
+I_hsmm = identify_luteal_phases(RES = RES)
+I_hmm = identify_luteal_phases(RES = RES.hmm)
+
+I_both = bind_rows(I_hsmm %>% mutate(model = "hsmm"),
+                   I_hmm %>% mutate(model = "hmm"))
+
+
+ggplot(I_both %>%  
+         filter(duration < 50,
+                !str_detect(tracking_behavior, " - ")) %>% 
+         mutate(tracking_behavior = 
+                  tracking_behavior %>% 
+                  factor(., levels = c("b","bp","b_tests","no_temp","no_mucus","full"))), 
+       aes(x = duration, fill = model)) +
+  geom_histogram(position = "identity", alpha = 0.5, binwidth = 1) +
+  scale_x_continuous(breaks = seq(0,100,by = 7)) +
+  theme(legend.position = "bottom") +
+  xlab("duration (days)") +
+  ggtitle("Luteal phases") +
+  facet_grid(tracking_behavior ~ ., scales  = "free")
+
+
+
+ggplot(I_both %>%  
+         filter(confident_ovulation_estimate,
+                tracking_behavior %in% c("no_temp","no_mucus","full"),
+                duration < 50,
+                !str_detect(tracking_behavior, " - ")) %>% 
+         mutate(tracking_behavior = 
+                  tracking_behavior %>% 
+                  factor(., levels = c("b","bp","b_tests","no_temp","no_mucus","full"))), 
+       aes(x = duration, fill = model)) +
+  geom_histogram(position = "identity", alpha = 0.5, binwidth = 1) +
+  scale_x_continuous(breaks = seq(0,100,by = 7)) +
+  theme(legend.position = "bottom") +
+  xlab("duration (days)") +
+  ggtitle("Luteal phases starting with a confidently estimated ovulation date") +
+  facet_grid(tracking_behavior ~ ., scales  = "free")
+
+
+```
+
+
+
+
+
+## On Kindara data (bad HSMM decoding, fitted)
+
+Loading data and formatting results
+
+```{r perf-real-loading-data}
+
+X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
+RES.bad_hsmm = read_feather(path = paste0(IO$output_data, "RES_app_data_bad_hsmm_fitted.feather"))
+ML = read_feather(path = paste0(IO$output_data, "ML.feather")) %>% rename(state_GT = state) 
+
+```
+
+
+```{r perf-real-ML-XP}
+
+
+XP.bad_hsmm = full_join(X, RES.bad_hsmm, by = c("seq_id", "t")) %>% 
+  left_join(., ML, by = c("seq_id", "t") ) 
+
+write_feather(XP.bad_hsmm, path = paste0(IO$output_data, "decoding_results_app_data_with_bad_HSMM_fitted.feather"))
+
+```
+
+__Overall accuracy__
+
+
+```{r perf-real-Accuracies}
+
+Accuracy.bad_HSMM = mean(XP.bad_hsmm$state == XP.bad_hsmm$state_GT, na.rm = TRUE)
+Accuracy.bad_HSMM
+
+Weighted_Accuracy.bad_HSMM = weighted.mean(x = XP.bad_hsmm$state == XP.bad_hsmm$state_GT, w = XP.bad_hsmm$prob, na.rm = TRUE)
+Weighted_Accuracy.bad_HSMM
+
+
+```
+
+__Confusion matrices__
+
+```{r perf-real-conf-mat}
+
+confusion_matrix_df.bad_HSMM = XP.bad_hsmm %>% 
+  filter(!is.na(state), !is.na(state_GT)) %>% 
+  group_by(state_GT, state) %>% 
+  summarize(n = n(),
+            wn = sum(prob),
+            .groups = "drop") %>% 
+  group_by(state_GT) %>% 
+  mutate(tot = sum(n),
+         wtot = sum(wn),
+         .groups = "drop") %>% 
+  ungroup() %>% 
+  mutate(perc = n/tot,
+         wperc = wn/wtot) %>% 
+  select(-n, -wn, -tot, -wtot) %>% 
+  pivot_longer(cols = c("perc","wperc"), names_to = "type", values_to = "fraction") %>% 
+  mutate(type = ifelse(type == "perc", "Accuracy","Weighted Accuracy"),
+         GT_state_name = R_hsmm$state_names[state_GT] %>%  factor(., levels = R_hsmm$state_names),
+         decoded_state_name = R_hsmm$state_names[state] %>%  factor(., levels = R_hsmm$state_names))
+```
+
+
+```{r perf-real-conf-mat-viz, fig.width=10, fig.height=4.5, fig.cap="Confusion matrix between manually labelled and decoded states."}
+
+g_conf_mat.bad_HSMM = 
+  ggplot(
+    confusion_matrix_df.bad_HSMM, 
+    aes(x = decoded_state_name, y = GT_state_name, fill = fraction)) +
+  geom_tile() + 
+  facet_grid(. ~ type) +
+  scale_fill_gradient("State-specific accuracy", low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+g_conf_mat.bad_HSMM
+
+save(g_conf_mat.bad_HSMM, file = "../Data/plots/g_conf_mat_bad_HSMM_fitted.Rdata")
+  
+```
+
+
+## On Kindara data (bad HSMM decoding)
+
+Loading data and formatting results
+
+```{r perf-real-loading-data}
+
+X = read_feather(path = paste0(IO$output_data, "processed_app_data.feather"))
+RES.bad_hsmm = read_feather(path = paste0(IO$output_data, "RES_app_data_bad_hsmm.feather"))
+ML = read_feather(path = paste0(IO$output_data, "ML.feather")) %>% rename(state_GT = state) 
+
+```
+
+
+```{r perf-real-ML-XP}
+
+
+XP.bad_hsmm = full_join(X, RES.bad_hsmm, by = c("seq_id", "t")) %>% 
+  left_join(., ML, by = c("seq_id", "t") ) 
+
+write_feather(XP.bad_hsmm, path = paste0(IO$output_data, "decoding_results_app_data_with_bad_HSMM.feather"))
+
+```
+
+__Overall accuracy__
+
+
+```{r perf-real-Accuracies}
+
+Accuracy.bad_HSMM = mean(XP.bad_hsmm$state == XP.bad_hsmm$state_GT, na.rm = TRUE)
+Accuracy.bad_HSMM
+
+Weighted_Accuracy.bad_HSMM = weighted.mean(x = XP.bad_hsmm$state == XP.bad_hsmm$state_GT, w = XP.bad_hsmm$prob, na.rm = TRUE)
+Weighted_Accuracy.bad_HSMM
+
+
+```
+
+__Confusion matrices__
+
+```{r perf-real-conf-mat}
+
+confusion_matrix_df.bad_HSMM = XP.bad_hsmm %>% 
+  filter(!is.na(state), !is.na(state_GT)) %>% 
+  group_by(state_GT, state) %>% 
+  summarize(n = n(),
+            wn = sum(prob),
+            .groups = "drop") %>% 
+  group_by(state_GT) %>% 
+  mutate(tot = sum(n),
+         wtot = sum(wn),
+         .groups = "drop") %>% 
+  ungroup() %>% 
+  mutate(perc = n/tot,
+         wperc = wn/wtot) %>% 
+  select(-n, -wn, -tot, -wtot) %>% 
+  pivot_longer(cols = c("perc","wperc"), names_to = "type", values_to = "fraction") %>% 
+  mutate(type = ifelse(type == "perc", "Accuracy","Weighted Accuracy"),
+         GT_state_name = R_hsmm$state_names[state_GT] %>%  factor(., levels = R_hsmm$state_names),
+         decoded_state_name = R_hsmm$state_names[state] %>%  factor(., levels = R_hsmm$state_names))
+```
+
+
+```{r perf-real-conf-mat-viz, fig.width=10, fig.height=4.5, fig.cap="Confusion matrix between manually labelled and decoded states."}
+
+g_conf_mat.bad_HSMM = 
+  ggplot(
+    confusion_matrix_df.bad_HSMM, 
+    aes(x = decoded_state_name, y = GT_state_name, fill = fraction)) +
+  geom_tile() + 
+  facet_grid(. ~ type) +
+  scale_fill_gradient("State-specific accuracy", low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+g_conf_mat.bad_HSMM
+
+save(g_conf_mat.bad_HSMM, file = "../Data/plots/g_conf_mat_bad_HSMM.Rdata")
+  
+```
+
+
+
+
+
+
+
+
+# Figures
+
+
+```{r}
+
+
+
+# Example with GT and decoding
+
+g_example = plot_hsmm_seq(
+  X = XP %>% filter(seq_id == unique(XP$seq_id)[8]) %>% 
+    rename(state_prob = prob), 
+  model = R_hsmm, 
+  compact_view = TRUE,
+  add_color_legend_in_compact_view = FALSE) #,
+  # title = "Labeling of a Kindara user time-series")
+
+
+# confusion matrix
+# load("../../semiM-Public-Repo/Data/plots/g_conf_mat.Rdata")
+# g_conf_mat = g_conf_mat + theme(legend.position = "bottom") 
+
+conf_mat = 
+  XP %>% 
+  filter(!is.na(state_GT)) %>% 
+  group_by(state, state_GT) %>% 
+  summarize(wn = sum(prob),
+            .groups = "drop") %>% 
+  group_by(state_GT) %>% 
+  mutate(wtot = sum(wn)) %>% 
+  ungroup() %>% 
+  mutate(wperc = wn/wtot) %>% 
+  select(-wn, -wtot) %>% 
+  mutate(GT_state_name = 
+           R_hsmm$state_names[state_GT] %>% 
+           factor(., R_hsmm$state_names %>% rev()), 
+         decoded_state_name = 
+           R_hsmm$state_names[state] %>% 
+           factor(., R_hsmm$state_names))
+
+
+
+g_conf_mat = 
+  ggplot(
+    conf_mat, 
+    aes(x = decoded_state_name, y = GT_state_name, fill = wperc)) +
+  geom_tile() +
+  scale_fill_gradient(
+    "State-specific   \nweighted accuracy   ", 
+    low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "bottom",
+        legend.title = element_text(hjust = 1)) # +
+  # ggtitle("Weighted state accuracy")
+#g_conf_mat
+
+```
+

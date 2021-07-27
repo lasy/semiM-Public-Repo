@@ -1,0 +1,597 @@
+---
+title: "Performances"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+
+```{r perf-setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+source("Scripts/00_setup.R")
+
+library(viridis)
+
+```
+
+
+```{r perf-load-model, echo = FALSE, results='hide'}
+load("../Data/models/R_hsmm.Rdata", verbose = TRUE)
+```
+
+
+# Performances
+
+## On Synthetic data
+
+__Loading and formatting results__
+
+```{r perf-load-synth-data}
+X = read_feather("../Data/synthetic_data/Xsim.feather")
+RES = read_feather("../Data/decodings/RES_synthetic_data.feather")
+```
+
+
+```{r perf-format-synth-data}
+
+XP = full_join(RES, 
+               X %>%  select(seq_id, t, state, tracking_category, alpha, alpha_level) %>%
+                 rename(state_GT = state), by = c("seq_id", "t"))
+
+```
+
+
+__Overall accuracy__
+
+```{r perf-synth-XP}
+
+XP = 
+  XP %>% 
+  mutate(
+    tracking_category_str = 
+      case_when(tracking_category == "b" ~ "bleeding only (B)",
+                tracking_category == "bp" ~ "bleeding & preg. tests (BP)",
+                tracking_category == "btm" ~ "bleeding, mucus & tº (BTM)",
+                tracking_category == "full" ~ "all"
+      ) %>% 
+      factor(., levels = c("bleeding only (B)","bleeding & preg. tests (BP)","bleeding, mucus & tº (BTM)","all"))
+  )
+
+```
+
+
+
+```{r perf-synth-accuracies}
+
+Accuracies =  
+  XP %>% 
+  group_by(alpha, alpha_level, tracking_category_str) %>% 
+  summarize(Accuracy = mean(state == state_GT, na.rm = TRUE),
+            Weighted_mean_of_sample_accuracy = weighted.mean(x = state == state_GT, w = prob, na.rm = TRUE),
+            .groups = "drop") %>% 
+  pivot_longer(cols = c("Accuracy","Weighted_mean_of_sample_accuracy"), 
+               names_to = "accuracy_type", values_to = "Accuracy") %>% 
+  mutate(accuracy_type = accuracy_type %>%  str_replace_all(., "_"," "))
+
+```
+
+
+
+```{r perf-synth-accuracies-viz, echo = FALSE, fig.height=3, fig.width=8, fig.cap="Accuracy  and weighted mean of sample accuracy on synthetic data."}
+
+g_synth_acc = 
+  ggplot(Accuracies, 
+         aes(x = alpha, 
+             y = Accuracy, col = tracking_category_str)) + 
+  geom_point() + geom_line() + 
+  facet_grid(. ~ accuracy_type) + 
+  ylab("") + # xlab(expression(alpha)) + 
+  xlab("Tracking frequency") + 
+  scale_color_manual(name = "Set of tracked variables", 
+                     values = viridis_pal(direction = -1, option = "D")(4)) + 
+  scale_y_continuous(breaks = seq(0,1,by = 0.1), limits = c(0.5,1)) +
+  scale_x_continuous(breaks = unique(Accuracies$alpha), 
+                     labels = unique(Accuracies$alpha_level), 
+                     minor_breaks = NULL) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+g_synth_acc
+
+save(g_synth_acc, file = "../Data/plots/g_synth_acc.Rdata")
+
+```
+
+
+```{r perf-synth-accuracies-viz-2, echo = FALSE, fig.height=3, fig.width=4, fig.cap="Accuracy on synthetic data."}
+
+g_synth_acc = 
+  ggplot(Accuracies %>%  filter(accuracy_type == "Accuracy"), 
+         aes(x = alpha, 
+             y = Accuracy, col = tracking_category_str)) + 
+  geom_point() + geom_line() + 
+  facet_grid(. ~ accuracy_type) + 
+  ylab("") + # xlab(expression(alpha)) + 
+  xlab("Tracking frequency") + 
+  scale_color_manual(name = "Set of tracked variables", 
+                     values = viridis_pal(direction = -1, option = "D")(4)) + 
+  scale_y_continuous(breaks = seq(0,1,by = 0.1), limits = c(0.5,1)) +
+  scale_x_continuous(breaks = unique(Accuracies$alpha), 
+                     labels = unique(Accuracies$alpha_level), 
+                     minor_breaks = NULL) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+g_synth_acc
+
+save(g_synth_acc, file = "../Data/plots/g_synth_acc.Rdata")
+
+```
+
+
+__State-specific accuracy__
+
+
+```{r perf-synth-state-accuracies}
+
+Accuracies_per_state = XP %>% 
+  group_by(alpha, alpha_level, tracking_category_str, state_GT) %>% 
+  summarize(Accuracy = mean(state == state_GT, na.rm = TRUE),
+            Weighted_mean_of_sample_accuracy = weighted.mean(x = state == state_GT, w = prob, na.rm = TRUE),
+            .groups = "drop") %>% 
+  mutate(state_name = R_hsmm$state_names[state_GT] %>% factor(., levels = R_hsmm$state_names),
+         state_col = R_hsmm$state_colors[state_GT]) %>% 
+  pivot_longer(cols = c("Accuracy","Weighted_mean_of_sample_accuracy"), 
+               names_to = "accuracy_type", values_to = "accuracy") %>% 
+  mutate(accuracy_type = accuracy_type %>%  str_replace_all(., "_"," "))
+
+```
+
+```{r perf-synth-state-accuracies-viz, echo = FALSE, fig.height=5, fig.width=6, fig.cap="Per state accuracy on synthetic data."}
+
+g_synth_acc_per_state = 
+  ggplot(Accuracies_per_state %>% 
+           filter(state_name %in% c("M", "O", "P", "L", "B")) , 
+         aes(x = factor(alpha, levels = unique(alpha)) %>%  as.numeric(), 
+             y = accuracy, col = tracking_category_str)) +
+  geom_vline(xintercept = 4, color = "gray") +
+  geom_point() + geom_line() + 
+  facet_grid(state_name ~ accuracy_type) + 
+  ylab("") + xlab(expression(alpha)) + 
+  scale_color_manual(name = "Tracking category", values = viridis_pal(direction = -1, option = "D")(4)) + 
+  scale_y_continuous(breaks = seq(0,1,by = 0.2)) +
+  scale_x_continuous(
+    breaks = 1:length(unique(Accuracies$alpha)), 
+    labels = sort(unique(Accuracies$alpha)), minor_breaks = NULL)
+
+
+g_synth_acc_per_state
+
+
+save(g_synth_acc_per_state, file = "../Data/plots/g_synth_acc_per_state.Rdata")
+
+
+```
+
+```{r perf-synth-state-accuracies-viz-2, echo = FALSE, fig.height=4, fig.width=6, fig.cap="Per state accuracy on synthetic data."}
+
+g_synth_acc_per_state2 = 
+  ggplot(Accuracies_per_state %>% 
+           filter(state_name %in% c("M", "O", "P", "B"), 
+                  accuracy_type == "Accuracy") , 
+         aes(x = alpha, 
+             y = accuracy, col = tracking_category_str)) +
+  geom_point() + geom_line() + 
+  facet_grid(. ~ state_name) + 
+  ylab("") + xlab("Tracking frequency") + 
+  scale_color_manual(name = "Set of tracked variables", values = viridis_pal(direction = -1, option = "D")(4)) + 
+  scale_y_continuous(breaks = seq(0,1,by = 0.2)) +
+  scale_x_continuous(breaks = unique(Accuracies_per_state$alpha), 
+                     labels = unique(Accuracies_per_state$alpha_level), minor_breaks = NULL) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+g_synth_acc_per_state2
+
+save(g_synth_acc_per_state2, file = "../Data/plots/g_synth_acc_per_state2.Rdata")
+
+```
+
+
+
+__Confusion matrices__
+
+```{r perf-synth-conf-mat}
+
+confusion_matrix_df = XP %>% 
+  filter(!is.na(state)) %>% 
+  group_by(alpha, alpha_level, tracking_category, state_GT, state) %>% 
+  summarize(n = n(),
+            wn = sum(prob),
+            .groups = "drop") %>% 
+  group_by(alpha, alpha_level, tracking_category, state_GT) %>% 
+  mutate(tot = sum(n),
+         wtot = sum(wn),
+         .groups = "drop") %>% 
+  ungroup() %>% 
+  mutate(perc = n/tot,
+         wperc = wn/wtot) %>% 
+  select(-n, -wn, -tot, -wtot) %>% 
+  pivot_longer(cols = c("perc","wperc"), names_to = "type", values_to = "fraction") %>% 
+  mutate(type = ifelse(type == "perc", "Accuracy","Weighted Accuracy"),
+         GT_state_name = R_hsmm$state_names[state_GT] %>%  factor(., levels = R_hsmm$state_names),
+         decoded_state_name = R_hsmm$state_names[state] %>%  factor(., levels = R_hsmm$state_names))
+
+```
+
+```{r perf-synth-conf-mat-viz, fig.width=15, fig.height=12, fig.cap="Confusion matrix for the decoding on synthetic data."}
+
+g_synth_conf_mat = 
+  ggplot(confusion_matrix_df %>%  filter(type == "Accuracy"),
+         aes(x = decoded_state_name, y = GT_state_name, fill = fraction))+
+  geom_tile()+
+  scale_y_discrete(drop = FALSE) +
+  facet_grid(tracking_category ~ alpha_level) +
+  scale_fill_gradient(low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Simulated states (ground truth)") + xlab("Decoded states") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+g_synth_conf_mat
+
+save(g_synth_conf_mat, file = "../Data/plots/g_synth_conf_mat.Rdata")
+
+```
+
+
+
+
+\newpage
+
+## On Kindara data
+
+We compare the performances of decoding with different models: a simple HMM, a weakly specified HSMM, the proposed HSMM. We also evaluate the impact of our hierarchical approach by comparing the performances of our HSMM with hierarchical decoding (h-HSMM) and of our HSMM without the hierarchical decoding (HSMM).
+
+```{r 4-decoding-real-data-models}
+
+models = read_feather(paste0(IO$output_data, "models.feather"))
+
+models =
+  models %>% 
+  mutate(
+    model_name = 
+      str_c(
+        ifelse(approach == "adaptative","h-",""),
+        model %>% 
+          str_remove("R_") %>% 
+          str_replace("hmm","HMM") %>% 
+          str_replace("hsmm", "HSMM") %>% 
+          str_replace("_"," ")
+      ),
+    model_name = model_name %>% 
+      factor(., levels = unique(model_name)),
+    type = ifelse(fit_model, "fitted","specified"),
+    type = type %>% factor(., levels = unique(type))
+  )
+
+
+```
+
+
+
+### Accuracies
+
+```{r 4-accuracies}
+
+source("Scripts/00_performances_analysis.R")
+
+tic()
+accuracies = 
+  map_dfr(
+    .x = 1:nrow(models),
+    .f = function(i){
+      this_decoding_res = 
+        compute_accuracy(
+          data_file = paste0(IO$output_data, "processed_app_data.feather"),
+          GT_file =  paste0(IO$output_data, "ML.feather"),
+          decoding_file = str_c(IO$output_data, "decodings/", models$file_name[i])
+        )
+      bind_cols(
+        models[rep(i,2),],
+        data.frame(
+          accuracy_type = c("accuracy","weighted mean of sample accuracy"),
+          value = c(this_decoding_res$Accuracy,
+                    this_decoding_res$Weighted_mean_of_sample_accuracy)
+        )
+      )
+    }
+  )
+toc() # 3 sec
+
+accuracies
+
+write_feather(accuracies, path = "../Data/decodings/rw_accuracies.feather")
+
+```
+
+
+```{r 4-accuracies-viz}
+
+ggplot(accuracies, aes(y = value, x = type, fill = accuracy_type))+
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_grid(. ~ model_name) +
+  xlab("") +
+  ylab("(weighted mean of sample) accuracy") +
+  scale_y_continuous(breaks = seq(0,1,by = 0.2), minor_breaks = seq(0,1,by = 0.05)) +
+  scale_fill_manual("",values = c("darkseagreen2","cornflowerblue")) +
+  theme(strip.background = element_rect(fill = "gray85", colour = NA),
+        legend.position = "bottom")
+
+```
+
+
+### Confusion matrices
+
+
+```{r 4-confusion-matrices}
+
+tic()
+conf_matrices = 
+  map_dfr(
+    .x = 1:nrow(models),
+    .f = function(i){
+      this_decoding_res = 
+        compute_accuracy(
+          data_file = paste0(IO$output_data, "processed_app_data.feather"),
+          GT_file =  paste0(IO$output_data, "ML.feather"),
+          decoding_file = str_c(IO$output_data, "decodings/", models$file_name[i])
+        )
+      this_decoding_res$Conf_Matrix %>% 
+        mutate(model_name = models$model_name[i],
+               type = models$type[i])
+      
+    }
+  )
+toc() # 2 sec
+
+
+write_feather(conf_matrices, path = "../Data/decodings/rw_conf_matrices.feather")
+
+
+```
+
+
+```{r 4-confusion-matrices-viz-all, fig.width=16, fig.height=16, fig.cap="Confusion matrices for the decoding on our real-world data for all models."}
+
+ggplot(
+  conf_matrices, 
+  aes(x = decoded_state_name, y = GT_state_name, fill = proportion)) +
+  geom_tile() + 
+  facet_grid( type + proportion_type   ~  model_name) +  
+  scale_fill_gradient(
+    "Proportion of time-points    \nwith a given manual label    ", 
+    low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.background = element_rect(fill = "gray85", colour = "white"))
+
+```
+
+```{r 4-confusion-matrices-viz-specified-weigthed, fig.width=16, fig.height=5, fig.cap="Confusion matrices for the decoding on our real-world data for all specified models."}
+
+ggplot(
+  conf_matrices %>% filter(type == "specified", proportion_type != "Proportion"), 
+  aes(x = decoded_state_name, y = GT_state_name, fill = proportion)) +
+  geom_tile() + 
+  facet_grid(. ~ model_name) +
+  scale_fill_gradient(
+    "Proportion of time-points    \nwith a given manual label    ", 
+    low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.background = element_rect(fill = "gray85", colour = NA),
+        legend.position = "bottom")
+
+```
+
+
+```{r 4-confusion-matrices-viz-specified-weigthed-h-HSMM, fig.width=10, fig.height=8, fig.cap="Confusion matrices (accuracy and weighted accuracy) for the decoding on our real-world data for our proposed h-HSMM."}
+
+ggplot(
+  conf_matrices %>% filter(model_name == "h-HSMM"), 
+  aes(x = decoded_state_name, y = GT_state_name, fill = proportion)) +
+  geom_tile() + 
+  facet_grid(proportion_type ~ type) +
+  scale_fill_gradient(
+    "Proportion of time-points    \nwith a given manual label    ", 
+    low = "white", high = "steelblue4", limits = c(0,1)) +
+  coord_fixed() +
+  ylab("Manually labelled states") + xlab("Decoded states")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.background = element_rect(fill = "gray85", colour = NA)) +
+  ggtitle("Confusion matrix for our h-HSMM")
+
+```
+
+
+### Predicted state probabilities
+
+
+```{r 4-predicted-state-probabilities}
+
+tic()
+XP_all = 
+  map_dfr(
+    .x = 1:nrow(models),
+    .f = function(i){
+      this_decoding_res = 
+        compute_accuracy(
+          data_file = paste0(IO$output_data, "processed_app_data.feather"),
+          GT_file =  paste0(IO$output_data, "ML.feather"),
+          decoding_file = str_c(IO$output_data, "decodings/", models$file_name[i])
+        )
+      this_decoding_res$XP %>% 
+        mutate(model_name = models$model_name[i],
+               type = models$type[i])
+    }
+  )
+toc() # 3 sec
+
+write_feather(XP_all, path = "../Data/decodings/XP_all.feather")
+
+```
+
+```{r 4-predicted-state-probabilities-viz, fig.height=5, fig.width=7, fig.cap="Predicted state probabilities when prediction are correct (match the ground truth) or incorrect (different from ground truth)."}
+
+ggplot(XP_all, 
+       aes(x = correct_prediction, y = prob, 
+           col = correct_prediction, fill = correct_prediction)) +
+  geom_boxplot(outlier.size = 0.5, alpha = 0.5, outlier.alpha = 0.5) +
+  facet_grid(type ~ model_name) +
+  ylab("predicted state probability") +
+  xlab("") +
+  scale_fill_discrete("state prediction",
+                    breaks = c(FALSE, TRUE), 
+                    labels = c("incorrect", "correct")) +
+  scale_color_discrete("state prediction",
+                    breaks = c(FALSE, TRUE), 
+                    labels = c("incorrect", "correct")) +
+  theme(axis.text.x = element_blank(),
+        strip.background = element_rect(fill = "gray90", color = "transparent")) 
+
+```
+
+
+
+### Pregnancy durations
+
+Besides the accuracy computed from our sparse manual labeling, we also evaluate the performance of each model by looking at the distribution of pregnancy duration. 
+
+
+```{r 4-pregnancy-durations}
+
+
+tic()
+pregnancies = 
+  map_dfr(
+    .x = 1:nrow(models),
+    .f = function(i){
+      this_pregnancy_res = 
+        compute_pregnancy_duration(
+          decoding_file = str_c(IO$output_data, "decodings/", models$file_name[i])
+        )
+      this_pregnancy_res %>% 
+        mutate(model_name = models$model_name[i],
+               model_type = models$type[i])
+      
+    }
+  )
+toc() # 2 sec
+
+pregnancies = 
+  pregnancies %>% 
+  mutate(type = type %>% factor(., levels = c("pregnancy with loss", "pregnancy with birth"))) %>% 
+  filter(!is.na(type))
+
+write_feather(pregnancies, path = "../Data/decodings/pregnancies.feather")
+
+```
+
+
+```{r 4-pregnancy-durations-viz, fig.width=7, fig.height=7, fig.cap="Distribution of pregnancy durations as identified by the different models."}
+
+ggplot(pregnancies %>% filter(str_detect(type, "pregnancy"), model_type == "specified"), 
+       aes(x = duration/7, fill = type)) +
+  geom_histogram(position = "identity", binwidth = 1, alpha = 0.75) +
+  facet_grid(model_name ~ ., scale = "free_x") +
+  xlab("duration (weeks)") +
+  theme(strip.background = element_rect(fill = "gray85", colour = NA),
+        legend.position = "bottom")
+
+```
+
+
+
+
+
+### Sequences
+
+**All sequences with specified models decodings**
+
+
+```{r 4-sequence-viz, warning=FALSE, fig.width=12, fig.height=5, eval = TRUE}
+
+X_all_seq_4_viz = 
+  create_X_for_decoding_viz(
+    data_file = paste0(IO$output_data, "processed_app_data.feather"),
+    GT_file = paste0(IO$output_data, "ML.feather"),
+    decoding_files = models %>% filter(type == "specified") %>% mutate(name = model_name)
+  )
+
+# X_all_seq_4_viz %>% 
+#   group_by(seq_id) %>% 
+#   summarize(n_wrong = sum(`state_h-HSMM` != state_GT, na.rm = TRUE)) %>% 
+#   arrange(-n_wrong)
+
+write_feather(X_all_seq_4_viz, path = str_c(IO$output_data,"X_with_decoding_specified_models.feather"))
+
+for(sid in unique(X_all_seq_4_viz$seq_id)[1:10]){
+  this_X = X_all_seq_4_viz %>% filter(seq_id == sid)
+  plot_hsmm_seq(X = this_X, model = R_hsmm, title = sid, compact_view = TRUE) %>% 
+    print()
+}
+
+```
+
+
+**Sequences with differences between the specified and fitted models**
+
+
+
+```{r 4-sequences-differences-between-fitted-and-specified, warning=FALSE, fig.width=12, fig.height=5}
+
+X = 
+  create_X_for_decoding_viz(
+    data_file = paste0(IO$output_data, "processed_app_data.feather"),
+    GT_file = paste0(IO$output_data, "ML.feather"),
+    decoding_files = 
+      models %>% 
+      filter(model_name == "h-HSMM") %>% 
+      mutate(name = str_c(model_name, " ", type))
+  )
+
+
+selected_sequences = 
+  X %>% 
+  filter(!is.na(state_GT),
+         `state_h-HSMM specified` != `state_h-HSMM fitted`) %>% 
+  group_by(seq_id) %>% 
+  summarize(n = n(), .groups = "drop") %>% 
+  arrange(-n) %>% 
+  slice_head(n = 10)
+
+
+for(sid in unique(selected_sequences$seq_id)){
+  this_X = X %>% filter(seq_id == sid)
+  plot_hsmm_seq(
+    X = this_X, model = R_hsmm, title = sid, 
+    compact_view = TRUE, add_color_legend_in_compact_view = FALSE) %>%  print()
+}
+
+
+```
+
+
+
+
+
+
+
+

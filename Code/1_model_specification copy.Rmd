@@ -1,0 +1,898 @@
+---
+title: "R Model specification"
+author: "Laura Symul"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  bookdown::html_document2: 
+    theme: flatly
+    highlight: haddock
+    toc: yes
+    toc_float: true
+    toc_depth: 5
+    number_sections: true
+    fig_caption: true
+---
+
+```{r R-model-setup, include = FALSE, eval = TRUE, cache = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+source("Scripts/00_setup.R")
+```
+
+
+
+# Hidden semi-Markov model for labelling fertility-app data with reproductive events
+
+In this section, we specify a hidden-semi Markov model (HSMM) that will be used to decode time-series logged by users of a fertility/menstrual cycle tracking app (Kindara).
+
+The hidden states of this model are tight to biological events such as the menses, the follicular phase, ovulation, the luteal phase, pregnancies (ending in a birth or a loss), breast-feeding or anovulatory cycles.
+
+The variables (observations) are fertility-related body-signs that users can log in the tracking app. For example, users can track their bleeding flow (none, spotting, light, medium or heavy), the quality and quantity of their cervical mucus, their temperature at wake-up and results of ovulation or pregnancy tests. These tests are usually at-home kits which detect, in urine samples, either lutenizing hormones (LH), which usually surges within a day of ovulation, or human chrorionic gonadotropin (HCG), which is produced when a fertilized egg implants in the uterine wall. Note that LH tests may also detect HCG, given the similarity between the two hormones. 
+
+While these features are typically tracked by individuals using "Fertility Awareness Methods" (FAM) for their family planning (conception/contraception), there is a wide diversity in tracking habits and tracking purposes among the Kindara users. Some users only use the app to track their period, while other users take full advantage of all the tracking options offered by the app and track with the goal of increasing or decreasing their chances of pregnancy. Our modeling framework allows to model and fit the probabilities with which a user opens the app or measures/reports a given variable in each state.
+
+
+\newpage
+
+### States definition, transition and initial probabilities and sojourn distributions
+
+Our reproductive-events model is a 19-state hidden semi-Markov model. The model parameters are initialized and specified so that these 19 states matches biological/physiological states of the reproductive cycles. Table \@ref(tab:R-model-state-table) provides the list of these states and their description. Table \@ref(tab:R-model-init-prob-table) and \@ref(tab:R-model-transition-table) provides the initial and transition probabilities associated with each state while figure \@ref(fig:R-model-sojourn-viz) provides a visualization of the state sojourn distributions.
+
+```{r R-model-list, echo = FALSE}
+R_model = list()
+```
+
+
+```{r R-model-states, echo = FALSE}
+
+R_model$states = bind_rows(
+  data.frame(
+    names = c("Menses",
+              "Early Follicular","Late Follicular",
+              "delayed Ovulation",
+              "Ovu - 1","Ovulation","Ovu + 2",
+              "Luteal",
+              "Anovulatory cycle",
+              "Anovulatory with bleeding"), 
+    abbr = c("M","lE","hE","dO","preO","O","postO","Lut","Ano","AB"), 
+    colors = c("red3","skyblue1","skyblue2","skyblue3","blue","black","gold3","gold1","gray","salmon"), 
+    group = c(rep("Ovulatory",8), "Anovulatory","Anovulatory"),
+    group_sojourn_time_scale = c("Ovulatory","Ovulatory","Ovulatory", "-",
+                                 "-","-","-","Ovulatory","Anovulatory","Anovulatory"),
+    description = c(
+      "Shedding of the uterine wall, resulting in menstrual bleeding, after an ovulatory or an anovulatory cycle.",
+      "Estrogen levels are still low and fertile mucus is not yet observable.",
+      "Estrogen levels are rising and fertile mucus is observable.",
+      "One-day state if ovulation is abnormaly delayed (typically observed in PCOS patients).",
+      "One-day state preceding ovulation to account for a higher probability of a positive LH test compared to previous days.",
+      "One-day state during which an egg is released from one of the ovaries.",
+      "Two-day state during which the mucus becomes less transparent and more sticky and during which the wake-up body temperature increases.",
+      "Temperature is high (from progesterone), mucus is absent, sticky or creamy and spotting may be reported towards in the last days.",
+      "The anovulatory cycle state follows the follicular phase if a low temperature is consistently observed until the next menses.",
+      "The anovulatory with bleeding state describes anovulatory cycles in which the users experience quasi-constant bleeding. It follows the menses and the temperature is low throughout this state."
+    ),
+    model = 1,
+    stringsAsFactors = FALSE
+  ),
+  data.frame(
+    names = c("Implantation (Pregnancy)",
+              "Pregnancy with Loss","Loss","Post-Loss",
+              "Pregnancy with Birth - 1st trimester", 
+              "Pregnancy with Birth - 2nd trimester", 
+              "Pregnancy with Birth - 3rd trimester","Birth",
+              "Post-Partum","Breast-Feeding"), 
+    abbr = c("P","PL","L","lEpL","PB1","PB2","PB3","B","PP","BF"), 
+    colors = c("deeppink", #Implantation
+               "pink3", "pink4","skyblue3", #pregnancy with loss
+               "plum1","plum2", "plum3","plum4", # pregnancy with birth 1,2,3 + birth
+               "darkseagreen1","darkseagreen3" # PP + BF
+    ), 
+    group = c("P",rep("Loss",3),rep("Pregnancy",4),rep("Post-Delivery",2)),
+    group_sojourn_time_scale = c("-", #pregnancy
+                                 "Pregnancy","Birth or loss","-",  #pregnancy loss
+                                 "-","-","Pregnancy","Birth or loss", # pregnancy
+                                 "Anovulatory","Anovulatory" #pp
+    ),
+    description = c(
+      "The implantation state follows the post-ovulation state. Temperature is high and pregnancy tests may be positive 10-15 days after fertilization (ovulation).",
+      "After implantation, a pregnancy can end in a spontaneous or induced loss.",
+      "The embryo leaves the uterus, bleeding is usually reported.",
+      "The post-loss state is similar to the early follicular phase except that pregnancy tests may still be positive (residual HCG in the urine).",
+      "Pregnancies ending with a birth are divided into three trimesters. Temperature is very high in the 1st trimester. It has a fixed duration of 84 days (12 weeks).",
+      "Second trimester of the pregnancy, medium temperature. Duration is exactly 12 weeks.",
+      "Thirst trimester of the pregnancy, low temperature. Duration is ~12 weeks, but is variable to account for pre- and post-term births.",
+      "Birth state is when birth occurs. Bleeding may be reported by users.",
+      "After a pregnancy, a mother can either breast-feed or not. If not, the post-partum period is ~ 6-8 weeks before returning to ovulatory cycles.",
+      "Breast-feeding suppresses the return of ovulation for long period of times."
+    ),
+    model = 3,
+    stringsAsFactors = FALSE
+  )
+)
+R_model$states$number = 1:nrow(R_model$states)
+
+R_model$n_states = nrow(R_model$states)
+
+```
+
+
+```{r R-model-state-table, echo = FALSE}
+
+R_model$states %>% select(number,  abbr, names, description) %>% rename(i = number) %>% 
+  kable(., format = "latex", 
+        booktabs = T,
+        caption = "States of the hidden semi-Markov model of reproductive events")  %>% 
+  kable_styling(full_width = T, latex_options = c("striped", "hold_position", "scale_down")) %>% 
+  column_spec(1, width = "3mm")  %>% 
+  column_spec(2, bold = T, width = "7mm")  %>% 
+  column_spec(3, width = "22mm") %>%  
+  column_spec(4, width = "10cm") %>% 
+  row_spec(0, bold = TRUE)
+
+```
+
+
+
+
+
+```{r R-model-init, echo = FALSE}
+R_model$init = c(100,rep(1,R_model$n_states-1))
+R_model$init[R_model$states$abbr %in% c("PB1","PB2","PB3","PL")] = 0
+R_model$init = R_model$init/sum(R_model$init)
+```
+
+```{r R-model-init-prob-table, echo = FALSE}
+
+kable(
+  data.frame(state = R_model$states$abbr, pi = R_model$init %>%  round(.,2)) %>% t() %>% set_rownames(NULL)  ,
+  format = "latex",
+  booktabs = T, 
+  caption = "Specified values of the initial probabilities for each state of the HSMM of reproductive events."
+) %>% 
+  kable_styling(full_width = T, latex_options = c("hold_position", "scale_down")) 
+
+```
+
+```{r R-model-transitions, echo = FALSE}
+# Transition Probabilities
+trans = matrix(0 , 
+               nrow = R_model$n_states, 
+               ncol = R_model$n_states,
+               dimnames = list(R_model$states$abbr,
+                               R_model$states$abbr)) 
+
+trans["M","lE"] = 0.99
+trans["M","AB"] = 0.01
+
+trans["AB", "M"] = 1
+
+trans["lE", "hE"] = 1
+
+
+trans["hE","dO"] = 0.01
+trans["hE","preO"] = 0.95
+trans["hE", "Ano"] = 0.02
+
+trans["dO", "lE"] = 1
+
+trans["Ano","M"] = 1
+
+
+trans["preO","O"] = 1
+
+trans["O","postO"] = 1
+
+
+trans["postO","Lut"] = 0.9
+trans["postO","P"] = 0.1 # Pregnancy/Implantation
+
+trans["Lut","M"] = 1
+
+trans["P","PL"] = 0.3
+trans["P","PB1"] = 0.7
+
+trans["PL","L"] = 1
+
+trans["L","lEpL"] = 1
+
+trans["lEpL","hE"] = 1
+
+trans["PB1","PB2"] = 1
+trans["PB2","PB3"] = 1
+trans["PB3","B" ] = 1
+
+trans["B", "PP"] = 0.2
+trans["B","BF"] = 0.8 # 80% of newborns in the US are breastfed (CDC 2018 breastfeeding card)
+
+trans["PP","hE"] = 1
+
+trans["BF","hE"] = 1
+
+trans = trans/apply(trans,1,sum)
+
+R_model$trans = trans
+
+R_model$trans_no_names = trans %>% set_colnames(NULL) %>% set_rownames(NULL)
+
+#round(R_model$trans, 2) %>%  kable()
+```
+
+
+
+```{r R-model-transition-table, echo = FALSE}
+
+round(R_model$trans, 2) %>%  
+  kable(., 
+        format = "latex",
+        booktabs = T, 
+        caption = "Specified values of the transition probabilities between states of the HSMM of reproductive events.") %>% 
+  kable_styling(full_width = T, latex_options = c("hold_position")) 
+
+```
+
+
+
+```{r R-model-layout, echo = FALSE}
+
+# hsmm$states$l is the (x,y) coordinates for the graphical representation layout
+R_model$states$l = 
+  matrix(
+    c( 0, 0, #M  
+       3, 5, #lE
+       8, 8, #hE
+       5.5,6.5, #dO
+       13,3, #preO
+       13,-3, #O
+       8,-8, #postO  
+       3,-5, #lut
+       7, 3, #Ano
+       5, -1, #AB
+       -2,-8, #P
+       -5,-4, #PL
+       -5, 0, #L
+       3, 8, #lEpL
+       -8,-7, #PB1
+       -9,-6, #PB2
+       -10,-5, #PB3
+       -10, 0, #B
+       -6, 5, #PP
+       -8, 8 #BF
+    ),
+    byrow = TRUE,
+    ncol = 2
+  )
+```
+
+
+The `HiddenSemiMarkov` package allows to describe sojourns distributions as parametric distributions or non-parametric distributions. If described as parametric distributions, the distribution parameters are re-estimated at each M-step of the EM procedure when fitting the model to data, ensuring that the sojourn distributions keep following the specified parametric distribution. When specified as non-parametric distribution, the shape of the distribution is unconstrained.
+In both case, the initial sojourn distribution can also be used as a prior when updating the distributions in the EM-procedure if this option is selected when specifying a model.
+
+The initial (and prior) sojourn distributions of each state are specified to reflect as fairly as possible existing knowledge about these different biological states. Below, we provide references for distributions from the medical literature and from previous papers using similar data. These distributions are displayed visually in Figure \@ref(fig:R-model-sojourn-viz).
+
+
+Menses have a typical duration between 2 and 8 days.[@Fraser2011] The early follicular phase is characterized by low, slowly increasing, estradiol levels and medium-high FSH levels. This is the most variable phase of the menstrual cycle and has a typical duration between 3 and 8 days.[@Munro1991] In the late follicular phase, estradiol levels are rising sharply, FSH levels are decreasing. This phase last 2-5 days.[@Munro1991]. The sojourn of "pre-O" is arbitrarily fixed to 1 day. This state is specified distinct from the late follicular phase between the probability of a positive LH test differs between these two states.
+The sojourn of the ovulation state is fixed to 1 day as ovulation is a brief event and that the temporal resolution of our data is of 1 day.
+The duration of the luteal phase, which starts after ovulation, is known to vary less inter- and intra-individually than the follicular phase.[@Faust2019; @Symul2019; @Harlow1995; @Cole2009; @Lenton1984a; @Lenton1984] In the luteal phase, the basal body temperature is higher than in the follicular phase. However, past studies have shown that it takes a few days before temperature reaches its highest plateau. Thus, we divided the luteal phases into two states. The first one ("post-O"), of fixed duration (2 days), follows the ovulation state. The second one, the "Luteal" state, lasts about 11 days and is described by a gamma distribution to allow for a slight skew towards longer durations. 
+The state "Ano", which is associated with potential anovulatory cycles and which follows the early follicular phase, is here described with a duration of approximately 15 days with a variance of about 6 days. Anovulatory cycles are not well described in the literature, owning to the difficulty to assess the absence of ovulation. Many methods relying on progesterone levels or temperature measurements usually set a threshold, which is not universally defined (experts around the world use different values), under which ovulation is considered to not have happened. A study with longitudinal and frequent ultrasound exams would provide a better description of this phenomenon, but such study, which would be very costly given that anovulation are rare events, has not been realized yet to our knowledge.
+We based our estimates for the duration of anovulatory cycles based on [@Malcolm2003] and [@Prior2015].
+Another observed phenomenon that may be associated with anovulation is when people experience prolonged periods of uterine bleeding. This bleeding may be light or heavy and may be continuous or intermittent but frequent. To reflect this state, we defined the "Anovulatory with bleeding" state. Its sojourn distribution is wide, ranging from height to a hundred days, given that this state is not very well characterized in duration from the existing literature but has been reported by patients to physicians. [@Fraser2011]
+
+The states described so far correspond to states in which no conception happens: menses (a period) follow the luteal phase or an anovulatory state. However, when conception happens, _i.e._ when the egg released by the ovaries at ovulation absorbs a sperm (fertilization) and travels down one of fallopian tubes to implants in the uterine wall, another set of successive events happen. The 7-8 days following fertilization (ovulation) are very similar to a luteal phase in which no conception happens. However, once the fertilized egg is implanted, it initiates the production of the HCG hormone which can be detected in urine by pregnancy tests and the production of additional progesterone which leads to an increase or sustained plateau of high temperature. While temperature and HCG remain high in the first trimester of pregnancies, we divided the first weeks/months of pregnancies into two parts. The first part (the "P" state) is a fixed duration (17 days) state in which temperature are high and pregnancy tests likely give positive results. Usually, once pregnancy has been confirmed by a blood test in a clinic, users are less likely to keep tracking their temperature or to report pregnacy test results. This difference in behavior and the fact that early pregnancies can either continue or be interrupted (voluntarily or not) were the primary reasons to define the "P" state as a common first step before a pregnancy ending in a birth or a loss.
+
+If the pregnancy ends in a loss, the model transitions to the state "PL" (pregnancy with loss). This state has a highly skewed sojourn distribution as losses occurring early in pregnancy are more common than late losses.[@Wilcox1999; @Rossen2018] The "L" state follows the "PL" state and is associated to the moment when the loss occurs. Losses often lead to uterine bleeding for a few days which may be reported by the app users. After a loss, individuals usually return to ovulatory cycles. [@ACOG] Additionally, it may happen, that pregnancy test results remain positive for a few days after the loss, likely a consequence of residual presence of HCG hormone in urine. To account for that, we created an additional state, "lEpL" (for low-Estrogen post-loss) which has similar sojourn distribution and marginal emission distributions than the lE state (see below for the emission distributions), except that positive pregnancy test may be reported at a higher frequency in that state.
+
+If the pregnancy does not end in a loss, then the model progresses through the three trimester of pregnancy. The first two trimesters have a sojourn of fixed duration so that the sojourn distribution of the third trimester embeds the whole variability in length of pregnancies. Indeed, while the average pregnancy duration is of 38 weeks, pre-term births happen in approximately 4-10% of the time depending on countries [@Delnord2019] and post-term births may also happen (although less frequently as births are usually induced when pregnancy is past term). Consequently, we describe the sojourn duration of the third trimester of pregnancy as a skew normal distribution with an heavier tail for shorter duration.
+
+Finally, following a birth, the mother may or not breast-feed her newborn child. In the absence of breast-feeding, menses are reported to return 6-8 weeks after delivery, which means that estrogen are rising 4-6 weeks after delivery. The duration of the "post-partum" state (PP), which is associated with the post-partum period when mothers do not breastfeed, is thus described by a normal distribution of mean 5 weeks and standard deviation of 10 days. If the mother breastfeed, this usually delays the return of ovulatory cycles. Given that the breast-feeding duration is highly unpredictable, the sojourn distribution for that state is very flat and ranges from 7 weeks to over two years.
+
+
+```{r R-model-sojourn, echo = FALSE}
+
+Nd = 1000 # longest sojourn =~ 2.75 years
+x = 1:Nd # support (days)
+
+#initialization
+R_model$sojourn = matrix(nrow = R_model$n_states, ncol = Nd) %>%
+  set_rownames(R_model$states$abbr)
+
+oneday = c(1, rep(0,Nd-1))
+twodays = c(0,1, rep(0,Nd-2))
+Ndays = function(N,Nd) c(rep(0,N-1), 1, rep(0,Nd-N))
+uptoNdays = function(N,Nd){return(c(rep(1/N,N), rep(0,Nd-N)))}
+
+# load FAM paper data
+FAM_agg_sojourn = read_feather(path = paste0(IO$tmp_data,"FAM_kindara_hsmm_states_agg.feather"))
+
+# M
+M_gammafit = gammafit(x = FAM_agg_sojourn$n_days[FAM_agg_sojourn$hsmm_states == "M"])
+R_model$sojourn["M",] = dgamma(x, shape = M_gammafit$shape, scale = M_gammafit$scale)
+R_model$sojourn["M",c(1,10:Nd)] = 0
+R_model$sojourn["M",] = R_model$sojourn["M",] / sum(R_model$sojourn["M",])
+
+# lE
+lE_gammafit = gammafit(x = FAM_agg_sojourn$n_days[FAM_agg_sojourn$hsmm_states == "lE"])
+R_model$sojourn["lE",] = dgamma(x, shape = lE_gammafit$shape, scale = lE_gammafit$scale)
+R_model$sojourn["lE",30:Nd] = 0
+R_model$sojourn["lE",] = R_model$sojourn["lE",]/sum(R_model$sojourn["lE",])
+
+# hE
+hE_gammafit = gammafit(x = pmax(1,FAM_agg_sojourn$n_days[FAM_agg_sojourn$hsmm_states == "hE"]-1))
+R_model$sojourn["hE",] = dgamma(x, shape = hE_gammafit$shape, scale = hE_gammafit$scale)
+
+# dO
+R_model$sojourn["dO",] = oneday
+
+# preO
+R_model$sojourn["preO",] = oneday
+
+# O
+R_model$sojourn["O",] =  oneday
+
+# postO
+R_model$sojourn["postO",] = twodays
+
+# Lut
+xlut = FAM_agg_sojourn$n_days[FAM_agg_sojourn$hsmm_states == "Lut"]
+xlut[(xlut<7)|(xlut>17)] = NA 
+lut_gammafit = gammafit(x = xlut[!is.na(xlut)])
+R_model$sojourn["Lut",] = dgamma(x, shape = lut_gammafit$shape, scale = lut_gammafit$scale)
+R_model$sojourn["Lut",18:Nd] = 0
+R_model$sojourn["Lut",] = R_model$sojourn["Lut",]/sum(R_model$sojourn["Lut",])
+
+# Ano
+ano_gammafit = gammafit(x = xlut[!is.na(xlut)]+3)
+R_model$sojourn["Ano",] = dgamma(x, shape = ano_gammafit$shape, scale = ano_gammafit$scale) 
+R_model$sojourn["Ano",1:6] = 0
+R_model$sojourn["Ano",] = R_model$sojourn["Ano",] /sum(R_model$sojourn["Ano",])
+
+# AB
+R_model$sojourn["AB",] = dunif(x = x, min = 8,max = 100) 
+R_model$sojourn["AB",] = R_model$sojourn["AB",] /sum(R_model$sojourn["AB",])
+
+# P
+R_model$sojourn["P",] = Ndays(17, Nd = Nd)
+
+# PL
+R_model$sojourn["PL",] = dgamma(x, shape = 1.5, scale = 30) 
+R_model$sojourn["PL", (5*31):length(x)] = 0
+# L
+R_model$sojourn["L",] = R_model$sojourn["M",]
+# lEpL
+R_model$sojourn["lEpL",] = R_model$sojourn["lE",]
+
+# PBs
+R_model$sojourn["PB1",] = Ndays(12*7, Nd = Nd) # exactly 12 weeks (1st trimester) 
+R_model$sojourn["PB2",] = Ndays(12*7, Nd = Nd) # exactly 12 weeks (2nd trimester)
+R_model$sojourn["PB3",] = dsn(x, xi = 12*7, omega = 12, alpha = -2.5) #approximately 12 weeks dnorm(x, mean = 12*7, sd = 8) # approximately 12 weeks 
+R_model$sojourn["PB3",c(1:5,112:length(x))] = 0
+
+# B
+R_model$sojourn["B",] =  dgamma(x, shape = 1.25, scale = 5) 
+R_model$sojourn["B",x>31] = 0 
+R_model$sojourn["B",] = R_model$sojourn["B",]/sum(R_model$sojourn["B",])
+
+# PP
+R_model$sojourn["PP",] = dnorm(x, mean = 5*7, sd = 10) # ~ average PP of 5 weeks
+R_model$sojourn["PP",1:18] = 0
+R_model$sojourn["PP",57:Nd] = 0
+R_model$sojourn["PP",] = R_model$sojourn["PP",]/sum(R_model$sojourn["PP",])
+
+# BF
+R_model$sojourn["BF",] =  dgamma(x, shape = 2.5, scale = 300) 
+R_model$sojourn["BF",1:56] = 0
+R_model$sojourn["BF",] = R_model$sojourn["BF",]/sum(R_model$sojourn["BF",])
+
+rm(x, Nd, M_gammafit, lE_gammafit, hE_gammafit, lut_gammafit, FAM_agg_sojourn, oneday, twodays, uptoNdays, xlut, ano_gammafit)
+
+```
+
+
+
+
+### Marginal emission probabilities
+
+The model observations are:
+
+1. __bleeding__, which is reported by users as a categorical variable taking the following possible values: `none`, `spotting`, `light`, `medium`, `heavy`. Bleeding is mostly medium or heavy during menses, losses and births. Spotting may be reported in the early follicular phase, in the luteal phase and around ovulation.[@Fraser2011] The "AB" state is also characterized by frequent spotting or bleeding.[@Fraser2011]
+
+2. __temperature__, which is a continuous variable. As explained in section \@ref(kindaraprep), the temperature reported is reported in Farenheit by users and we center the reported values around the median temperature of that users. In addition, outliers are removed, suspiciously repeated temperatures are removed, and temperatures that users flagged as questionable are also removed. We describe the temperature as following a normal distribution whose mean is state-dependent. During the follicular phase the mean normalized temperature is negative. It is positive after ovulation and in early pregnancies.
+
+3. __mucus__ is a categorical variable which can take the following possible values: `none`, `creamy`, `fertile`, `very fertile`, `sticky`. Mucus is absent or creamy in most phases. Fertile mucus is reported when estrogen levels are high and very fertile mucus is usually reported around ovulation.[@Billings1972] After ovulation, under the influence of progesterone, cervical mucus becomes sticky or absent. What resembles fertile mucus may also be reported throughout pregnancies. Usually, mucus is not reported in states where bleeding is reported.
+
+4. __pregnancy tests__ is a categorical variable, that can be either `pos` (positive test) or `neg` (negative test). Positive pregnancy tests are reported in pregnancy states or just following a loss (residual HCG hormone in urine). The rest of the time, pregnancy tests results are likely negative.
+
+5. __LH tests__ is also a categorical variable, that can be either `pos` (positive test) or `neg` (negative test). Positive LH tests are reported on the day of ovulation or the preceding day. Because the $\alpha$ sub-unit of the HCG (pregnancy) hormone is the same as the $\alpha$ sub-unit of the LH hormone, LH tests may also be reported positive in pregnancy states.[@Ehrenkranz2002] Some conditions, such as PCOS, lead to high levels of LH and thus users with this condition may report positive LH tests throughout their cycle. To account for these users, we initialize the probability of a positive LH test in other states as low and expect this probability to increase when fitting the model to time-series of users that may be affected by this condition (or other conditions leading to high LH concentration).
+
+See figure \@ref(fig:R-model-marg-em-par-viz) for a visualization of the marginal distributions of these values.
+
+
+```{r R-model-em-parms, echo = FALSE}
+em_parms = list()
+J = R_model$n_states
+```
+
+
+```{r R-model-bleeding, echo = FALSE}
+
+em_parms$bleeding = 
+  list(
+    type = "non-par",
+    params = list(values = c("none","spotting","light","medium","heavy")),
+    viz_options = list(colors = c("gray90", # none
+                                  hsv(0.07, s = 0.6, v = 1), # spotting
+                                  hsv(0.07, s = 0.8, v = 1), # light
+                                  hsv(0.07, s = 1  , v = 1), # medium
+                                  hsv(0.07, s = 1  , v = 0.8))) # heavy
+  )
+
+no_bleeding = c(0.99,0.01,0.001,0.0001,0.0001); no_bleeding = no_bleeding/sum(no_bleeding)
+frequent_bleeding = c(0.2,0.5,0.2,0.05,0.01); frequent_bleeding = frequent_bleeding/sum(frequent_bleeding)
+rare_spotting = c(0.85,0.15,0.001,0.0005,0.0001); rare_spotting = rare_spotting/sum(rare_spotting)
+high_bleeding = c(0.05,0.1,0.4,0.5,0.5); high_bleeding = high_bleeding/sum(high_bleeding)
+
+nn = length(em_parms$bleeding$params$values)
+bleeding_probs = matrix(no_bleeding, ncol = J, nrow = nn, byrow = FALSE) %>% 
+  set_rownames(em_parms$bleeding$params$values) %>% 
+  set_colnames(R_model$states$abbr)
+
+# high bleeding states
+bleeding_probs[,c("M","L","B")] = high_bleeding
+# frequent_bleeding states (AB)
+bleeding_probs[,"AB"] = frequent_bleeding
+# rare_spotting states 
+bleeding_probs[,c("O","Lut","Ano","P","PL","lEpL","PB1","PP")] = rare_spotting
+
+# adding the prob matrix to the em_parms
+em_parms$bleeding$params$probs = bleeding_probs
+
+rm(bleeding_probs, high_bleeding, rare_spotting, frequent_bleeding, no_bleeding)
+```
+
+
+
+```{r R-model-LH, echo = FALSE}
+
+em_parms$LH = list(type = "non-par",
+                   params = list(values = c("pos","neg")),
+                   viz_options = list(colors = c("cornflowerblue","coral1"))
+)
+
+LH_neg = c(0.05,0.95)
+
+em_parms$LH$params$probs = matrix(LH_neg, 
+                                  nrow = length(em_parms$LH$params$values),
+                                  ncol = J, byrow = FALSE) %>% 
+  magrittr::set_rownames(em_parms$LH$params$values) %>% 
+  magrittr::set_colnames(R_model$states$abbr)
+
+# states with positive LH tests
+em_parms$LH$params$probs[,"lE"] = c(0.1,0.9)
+em_parms$LH$params$probs[,c("hE","lEpL")] = c(0.2,0.8)
+em_parms$LH$params$probs[,"dO"] = c(0.5,0.5)
+em_parms$LH$params$probs[,"preO"] = c(0.7,0.3)
+em_parms$LH$params$probs[, c("O","P","PL","PB1","PB2","PB3")] = c(0.8,0.2)
+em_parms$LH$params$probs[,"postO"] = c(0.2,0.8)
+
+rm(LH_neg)
+
+```
+
+
+
+```{r R-model-mucus, echo = FALSE}
+
+#levels(mucus.dict$category)
+
+em_parms$mucus = 
+  list(type = "non-par",
+       params = list(values = levels(mucus.dict$category)),
+       viz_options = list(colors =  c("gray80", # none
+                                      "antiquewhite2", # creamy
+                                      "lightblue2", # fertile
+                                      "lightblue3", # very_fertile
+                                      "gold2") # sticky
+       )
+  )
+
+no_mucus = c(100,10,1,1,1); no_mucus = no_mucus/sum(no_mucus)
+creamy = c(40,50,10,5,20); creamy = creamy/sum(creamy)
+fertile = c(10,30,40,30,10); fertile = fertile/sum(fertile)
+very_fertile = c(10,20,30,60,25); very_fertile = very_fertile/sum(very_fertile)
+sticky = c(60,30,10,10,60); sticky = sticky/sum(sticky)
+unclear = c(1.5,1.5,1,1,1); unclear = unclear/sum(unclear)
+
+nn = length(em_parms$mucus$params$values)
+mucus_probs = matrix(no_mucus, ncol = J, nrow = nn, byrow = FALSE) %>% 
+  magrittr::set_rownames(em_parms$mucus$params$values) %>% 
+  magrittr::set_colnames(R_model$states$abbr)
+
+
+# creamy mucus states
+mucus_probs[, c("lE","lEpL","Ano")] = creamy
+# fertile mucus states
+mucus_probs[, c("dO")] = fertile
+# very fertile mucus states
+mucus_probs[, c("hE","preO","O")] = very_fertile
+# sticky mucus states
+mucus_probs[, c("postO","Lut","P")] = sticky
+# unclear
+mucus_probs[, c("PL","PB1","PB2","PB3", "PP","BF")] = unclear
+
+# adding the prob matrix to the em_parms
+em_parms$mucus$params$probs = mucus_probs
+
+rm(unclear, sticky, very_fertile, fertile, no_mucus, mucus_probs, nn, creamy)
+
+
+```
+
+
+```{r R-model-temp, echo = FALSE}
+
+em_parms$temp = list(type = "norm",
+                     params = list())
+
+# TEMP MEAN
+# default = low_temp
+temp_mean = rep(-0.3, J) %>% set_names(R_model$states$abbr)
+# rising temp
+temp_mean["postO"] = 0.3
+# high temp states'
+temp_mean[c("Lut","P","PL", "PB1")] = 0.6
+# mid temp states
+temp_mean[c("M","preO","O","BF","B","L")] = 0
+#
+em_parms$temp$params$mean = temp_mean
+
+
+
+# TEMP standard deviation
+temp_sd = rep(0.2, J) %>% set_names(R_model$states$abbr)
+#we increase the sd for the states where there is more noise in the temp profiles
+temp_sd[c("M","L","PB2","PB3","B","PP","BF")] = 0.5
+em_parms$temp$params$sd = temp_sd
+
+rm(temp_mean, temp_sd)
+```
+
+
+
+```{r R-model-preg, echo = FALSE}
+
+
+em_parms$preg = list(type = "non-par",
+                     params = list(values = c("pos","neg")),
+                     viz_options = list(colors = c("cornflowerblue","coral1")))
+
+preg_neg = c(0.05, 0.95)
+
+preg_probs = matrix(preg_neg, 
+                    nrow = length(em_parms$preg$params$values),
+                    ncol = J, byrow = FALSE) %>% 
+  magrittr::set_rownames(em_parms$preg$params$values) %>% 
+  magrittr::set_colnames(R_model$states$abbr)
+
+# states with positive pregnancy tests
+preg_probs[,c("P","PB1","PB2","PB3")] = c(0.9,0.1)
+preg_probs[,"PL"] = c(0.8,0.1)
+preg_probs[,c("L","lEpL")] = c(0.5,0.5)
+preg_probs[,"BF"] = c(0.02, 0.98)
+
+em_parms$preg$params$probs = preg_probs
+
+rm(preg_neg, preg_probs)
+
+```
+
+
+```{r R-model-emission-par, echo = FALSE}
+R_model$emission_par = em_parms
+```
+
+
+
+### Censoring probabilities
+
+Our hidden semi-Markov model framework allows to model missing data. The probability of missing data can be modeled in each state by either or both of these two ways: first, one can specify the probability of all variable being missing in a given state, and second, one can specify the probability of a specific variable being reported in a given state. 
+
+In our case, the first probability can be interpreted as the probability that the user opens the app when in a given biological state while the second probability can be interpreted as the probability that the user measured/observed a given body-sign in a given state.
+
+While we don't know what the tracking behavior of each user is, we will here specify them as the expected behavior for someone who is using the app for their family planning and who is interested in identifying their fertile window and pregnancies so that we can simulate realistic data in the next section. However, when decoding the time-series of a new users for which we don't have any tracking behavior information, we set these probabilities to have the same values accross states. When fitting the model to the time-series, the tracking behavior will be learned, just as the emission probabilities are updated.
+
+```{r R-model-censoring-prob-p, echo = FALSE, fig.height=2, fig.cap="Probability of all variable beeing missing simultaneously in each state of our reproductive events HSMM for a hypothetical 'typical' user."}
+
+# overall tracking frequency of 1/2
+p = rep(0.5, R_model$n_states) %>% set_names(R_model$states$abbr) 
+p[c("M")] = 0.1 # most people open the app during their period 
+p[c("AB")] = 0.2 # by definition, we only know of this state if there is data
+p[c("lE","Lut","Ano","lEpL")] = 0.4 # most people track >1/2 days in these states 
+p[c("hE","dO","preO","O","postO","L")] = 0.3 # most people track ~2/3 days in these states 
+p[c("PL","PB1")] = 0.9 # most people don't track much in the first trimester of pregnancy 
+p[c("PB2","PB3","PP")] = 0.98 # most people don't track much at all in the trimesters 2&3 of pregnancy or in PP 
+p[c("BF")] = 0.99 # most people don't track much at all when breast-feeding 
+
+ggplot(
+  data.frame(
+    state = names(p) %>% factor(.,levels = names(p)), 
+    p = p), 
+  aes(x = state, y = p, fill = factor(state))) +
+  geom_bar(stat = "identity") + scale_fill_manual(values = R_model$states$colors) + 
+  guides(fill = FALSE) +
+  ylim(c(0,1))
+
+
+```
+
+
+```{r R-model-censoring-prob-q, echo = FALSE, fig.height=3}
+
+q = matrix(0, nrow = length(R_model$emission_par), ncol = J) %>% 
+  set_rownames(names(R_model$emission_par)) %>% 
+  set_colnames(R_model$states$abbr)
+
+q["LH",] = 0.99
+q["LH",c("hE","dO","preO","O","postO")] = 0.5
+
+q["mucus",] = 0.5
+q["mucus",c("hE","preO","O","postO")] = 0.4
+q["mucus",c("dO")] = 0.1 # that's how we know this is happening
+q["mucus",c("M", "L","B","AB")] = 0.99 # no mucus when bleeding
+q["mucus",c("P", "PB1","PL")] = 0.9 # rarely reporting mucus during early pregnancies
+q["mucus",c("PB2", "PB3","PP", "BF")] = 0.99 # and even less afterwards
+
+q["temp",] = 0.5
+q["temp",c("M", "lEpL")] = 0.85
+q["temp",c("PB1","PL")] = 0.9
+q["temp",c("L","PB2","PB3","B","PP","BF")] = 0.99
+
+q["preg",] = 0.99
+q["preg",c("Lut")] = 0.9
+q["preg",c("P","lEpL")] = 0.6
+q["preg",c("PB1","PL")] = 0.95
+
+```
+
+```{r R-model-qjk-viz, echo = FALSE, fig.height=3, fig.cap="Probabilities that a hypothetical 'typical' user would not report a specific variable in each state of our reproductive events HSMM."}
+
+qjk_long = q %>% as.data.frame() %>% 
+  mutate(variable = rownames(q)) %>% 
+  pivot_longer(., -variable, names_to = "state_name", values_to = "q" ) %>% 
+  mutate(state_name = state_name %>% factor(., levels = R_model$states$abbr), 
+         state = state_name %>% as.numeric(),
+         state_color = R_model$states$colors[state])
+
+
+ggplot(qjk_long %>% filter(variable != "bleeding"), 
+       aes(x = state_name, y = q, fill = state_color)) +
+  geom_bar(stat = "identity") + scale_fill_identity() + 
+  ylim(c(0,1)) + guides(col = FALSE)+
+  facet_grid(variable ~ .) +
+  xlab("State")
+
+
+```
+
+
+
+
+```{r R-model-attaching-censoring-probs, echo = FALSE}
+
+R_model$censoring_probs = list(
+  p = p,
+  q = q
+)
+
+```
+
+
+### Specifying the `hsmm`
+
+```{r R-model-specificy}
+
+R_hsmm = specify_hsmm(
+  J = R_model$n_states,
+  state_names = R_model$states$abbr,
+  state_colors = R_model$state$colors,
+  init = R_model$init,
+  transition = R_model$trans,
+  sojourn = list(
+    type = "nonparametric",
+    d = t(R_model$sojourn)
+  ),
+  marg_em_probs = R_model$emission_par,
+  censoring_probs = R_model$censoring_probs,
+  verbose = FALSE
+)
+
+```
+
+```{r R-model-graph, fig.height=5, fig.height=5, out.width='100%', fig.cap= "Graph of our reproductive events HSMM. The width of the edges are proportional to the transition probabilities between states."}
+
+plot_hsmm_transitions(model = R_hsmm)
+
+```
+
+
+```{r R-model-sojourn-viz, echo = FALSE, fig.width=6, fig.height=4, fig.cap="Sojourn distributions of the HSMM of reproductive events."}
+
+sojourn = as.data.frame(t(R_model$sojourn))
+colnames(sojourn) = R_model$states$abbr
+sojourn$day = 1:nrow(sojourn)
+sojourn_long = pivot_longer(sojourn, cols = -day, names_to = "State", values_to = "d")
+
+sojourn_long = sojourn_long %>% mutate(
+  color = R_model$states$colors[match(State, R_model$states$abbr)],
+  group = R_model$states$group_sojourn_time_scale[match(State,R_model$states$abbr)]  %>% str_c(.," states") %>% 
+    factor(.,levels = unique(R_model$states$group_sojourn_time_scale) %>% str_c(.," states")) 
+) %>% arrange(group, State) %>% mutate(color = factor(color, levels = unique(color)))
+
+g = ggplot(sojourn_long %>%  dplyr::filter(d > 1/2000, !(group == "- states"),day <= 550),aes(x = day, y = d, fill = color, col = color))
+g = g + geom_area(position = "identity", alpha = 0.5)+
+  scale_color_identity()+scale_fill_identity()+ #"States",guide = "legend", labels = unique(g$data$State)
+  expand_limits(x = 0)+
+  ylab("pdf")+xlab("days")+
+  scale_x_continuous(breaks = 
+                       function(x){x = round(x); 
+                       if(x[2]< 63){by = 7};
+                       if(x[2] %in% 63:200){by = 30};
+                       if(x[2]> 200){by = 90};
+                       return(seq(0,x[2],by = by))})+
+  facet_wrap(group~., scale = "free", nrow = 4, dir = "h", strip.position = "top") 
+#+ theme(legend.position = "bottom", legend.key.size = unit(0.3,"line"), legend.direction = "vertical",legend.box.margin = margin(t = -20))
+g
+
+#ggsave(g, filename = str_c(IO$panels,"sojourn_distributions.pdf"),width = viz$full_width/4, height = viz$full_width/1.8, scale = 0.85)
+
+```
+
+
+
+```{r R-model-marg-em-par-viz, fig.height=8, fig.width=5, fig.cap="Specified marginal emission probabilities of our reproductive events HSMM."}
+
+plot_hsmm_marg_dist(model = R_hsmm, show_missing_probs = TRUE)
+
+```
+
+
+### Simulate a sequence
+
+```{r R-model-simulated-seq, fig.width=12, fig.height=5, warning=FALSE, fig.cap= "Simulated state and observation sequence with the reproductive event HSMM."}
+
+X = simulate_hsmm(R_hsmm, seed = 22, n_state_transitions = 150)
+
+plot_hsmm_seq(X, model = R_hsmm)
+
+
+```
+
+### Save model
+
+```{r R-model-save}
+
+save(R_model, file = paste0("../Data/models/R_model.Rdata"))
+save(R_hsmm, file = paste0("../Data/models/R_hsmm.Rdata"))
+
+```
+
+
+### Specifying the `hmm`
+
+For the sake of comparing the performances of our HSMM with a simple HMM, we also define a HMM by setting the sojourn distributions as geometric. The probability parameter is estimated by fitting the sojourn distribution of the HSMM.
+
+```{r R-model-HMM-sojourns}
+
+# geometric sojourns
+# we fit them from randomly generating from the hsmm sojourns
+
+S = R_model$sojourn
+
+geom_probs = map_dbl(
+  .x = 1:nrow(S),
+  .f = function(j){
+    d = R_model$sojourn[j,]
+    X = rep((1:ncol(S))-1, times = round(d*10000))
+    length(X)/(length(X) + sum(X))
+  }
+)
+
+```
+
+
+```{r R-model-specify-HMM}
+
+R_hmm = specify_hsmm(
+  J = R_model$n_states,
+  state_names = R_model$states$abbr,
+  state_colors = R_model$state$colors,
+  init = R_model$init,
+  transition = R_model$trans,
+  sojourn = list(
+    type = "geometric",
+    prob = geom_probs
+  ),
+  marg_em_probs = R_model$emission_par,
+  censoring_probs = R_model$censoring_probs,
+  verbose = FALSE
+)
+
+```
+
+
+```{r R-model-simulate-HMM}
+
+X_hmm = simulate_hsmm(R_hmm, seed = 22, n_state_transitions = 150)
+plot_hsmm_seq(X_hmm, model = R_hmm)
+
+```
+
+Simulating a sequence with the HMM shows quite unrealistic patterns in terms of pregnancy duration or menses duration (among the most obvious unrealistic patterns).
+
+
+```{r R-HMM-model-save}
+
+save(R_hmm, file = paste0("../Data/models/R_hmm.Rdata"))
+
+```
+
+
+
+
+### Specifying a `hsmm` with weak sojourn priors
+
+Similarly, to compare the performances of our HSMM, we weaken the sojourn distribution priors.
+
+The sojourn distributions are altered such that the distributions are centered approximately around the same mean duration but have wider variability.
+
+```{r R-model-weak-HSMM}
+
+sojourns = R_hsmm$sojourn
+
+for(j in 1:J){
+  this_d_o = sojourns[[j]]$d
+  rsamp = sample(1:length(this_d_o), prob = this_d_o, size = 10000, replace = TRUE)
+  v = (sd(rsamp)+0.1) %>% ceiling() %>%  add(3)
+  this_d_f = dnorm(-round(3*v):round(3*v), mean = 0, sd = v)
+  V = (length(this_d_f)/2) %>% floor
+  this_d = stats::filter(c(rep(0,V),this_d_o, rep(0,V)), filter = this_d_f, sides = 2)
+  this_d = this_d[!is.na(this_d)]
+  this_d = this_d/sum(this_d)
+  # plot(this_d_o[1:30], ylim = range(c(this_d_o, this_d)))
+  # points(this_d[1:30], col = "red")
+  sojourns[[j]]$d = this_d
+}
+
+```
+
+
+```{r R-model-specify-weak-HSMM}
+
+R_bad_hsmm = specify_hsmm(
+  J = R_model$n_states,
+  state_names = R_model$states$abbr,
+  state_colors = R_model$state$colors,
+  init = R_model$init,
+  transition = R_model$trans,
+  sojourn = sojourns,
+  marg_em_probs = R_model$emission_par,
+  censoring_probs = R_model$censoring_probs,
+  verbose = FALSE
+)
+
+```
+
+
+```{r R-model-simulate-weak-HSMM}
+
+X_bad_hsmm = simulate_hsmm(R_bad_hsmm, seed = 22, n_state_transitions = 150)
+plot_hsmm_seq(X_bad_hsmm, model = R_bad_hsmm)
+
+```
+
+Simulating a sequence with the HMM shows quite unrealistic patterns in terms of pregnancy duration or menses duration (among the most obvious unrealistic patterns).
+
+
+```{r R-weak-HSMM-model-save}
+
+save(R_bad_hsmm, file = paste0("../Data/models/R_bad_hsmm.Rdata"))
+
+```
+

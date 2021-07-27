@@ -69,35 +69,35 @@ source("Scripts/00_setup.R")
 
 \newpage
 
-```{r child = '1_HSMM_models_specification.Rmd', cache=TRUE}
+```{r child = '1_model_specification.Rmd', cache=TRUE}
 ```
 
 \newpage
 
-```{r child = '2_HSMM_datasets.Rmd', cache=TRUE}
-```
-
-\newpage
-
-
-```{r child = '3_HSMM_decoding.Rmd', cache=TRUE}
+```{r child = '2_datasets.Rmd', cache=TRUE}
 ```
 
 \newpage
 
 
-```{r child = '4_HSMM_performances.Rmd', cache=TRUE}
+```{r child = '3_decoding.Rmd', cache=TRUE}
 ```
 
 \newpage
 
-```{r child = '5_HSMM_predicting_periods.Rmd', cache=TRUE}
+
+```{r child = '4_performances.Rmd', cache=TRUE}
+```
+
+\newpage
+
+```{r child = '5_predicting_periods.Rmd', cache=TRUE}
 ```
 
 
 \newpage
 
-```{r child = '6_HSMM_within_state_dependencies.Rmd', cache=TRUE}
+```{r child = '6_within_state_dependencies.Rmd', cache=TRUE}
 ```
 
 \newpage
