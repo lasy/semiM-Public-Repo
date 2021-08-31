@@ -42,10 +42,11 @@ K_screen = image_read("../../semiM-Public-Repo/Figures_Tables_Media/Media/kindar
 K_screen_ratio = image_info(K_screen)$height / image_info(K_screen)$width 
 padding = 20
 
-g_app_screen = ggplot()+ 
-  coord_fixed(ratio = K_screen_ratio)+
-  background_image(K_screen)+
-  theme(plot.margin = margin(t=padding, l=padding, r=padding, b=padding, unit = "pt"))
+g_app_screen = 
+  ggplot() + 
+  coord_fixed(ratio = K_screen_ratio) +
+  background_image(K_screen) +
+  theme(plot.margin = ggplot2::margin(t=padding, l=padding, r=padding, b=padding, unit = "pt"))
 
 
 # time-series examples
@@ -145,8 +146,12 @@ tracking_model = image_read("../Figures_Tables_Media/Media/tracking_model-02.png
 tracking_model_ratio = image_info(tracking_model)$height / image_info(tracking_model)$width 
 padding = 20
 
-g_tm = ggplot()+ coord_fixed(ratio = tracking_model_ratio)+
-  background_image(tracking_model)+theme(plot.margin = margin(t=padding, l=padding, r=padding, b=padding, unit = "pt"))
+g_tm = 
+  ggplot() + 
+  coord_fixed(ratio = tracking_model_ratio) +
+  background_image(tracking_model) + 
+  theme(plot.margin = 
+          ggplot2::margin(t = padding, l = padding, r = padding, b = padding, unit = "pt"))
 
 
 # hierarchical approach
@@ -154,8 +159,10 @@ h_method = image_read("../Figures_Tables_Media/Media/tracking_model-04.png")
 
 h_method_ratio = image_info(h_method)$height / image_info(h_method)$width 
 
-g_hm = ggplot()+ coord_fixed(ratio = h_method_ratio)+
-  background_image(h_method)+theme(plot.margin = margin(t=padding, l=padding, r=padding, b=padding, unit = "pt"))
+g_hm = ggplot() + 
+  coord_fixed(ratio = h_method_ratio) +
+  background_image(h_method) + 
+  theme(plot.margin = ggplot2::margin(t = padding, l = padding, r = padding, b = padding, unit = "pt"))
 
 
 # R_hsmm graph
@@ -291,7 +298,7 @@ g_acc =
         #axis.text.x = element_text(angle = 90, hjust = 1),
         legend.position = "bottom",
         legend.key.size = rep(unit(10,"pt"),2),
-        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt")
+        legend.margin = ggplot2::margin(t = 0, r = 0, b = 0, l = 0, unit = "pt")
   )
 
 
@@ -314,7 +321,7 @@ g_conf_mat =
         strip.background = element_rect(fill = "gray85", colour = NA),
         legend.key.height = unit(10,"pt"),
         legend.title = element_text(vjust = 0.9),
-        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"),
+        legend.margin = ggplot2::margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"),
         legend.position = "bottom")
 
 # pregnancy durations
@@ -334,7 +341,7 @@ g_preg =
         strip.text.y = element_text(angle = 0, hjust = 0),
         legend.position = "bottom",
         legend.key.size = rep(unit(10,"pt"),2),
-        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"))
+        legend.margin = ggplot2::margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"))
 
 
 # Examples
@@ -392,7 +399,7 @@ Xb = left_join(X %>%
                  rename(state_decoded = state, prob_state_decoded = prob),
                by = c("seq_id","t"))
 
-g_example = plot_hsmm_seq(X = Xb %>% filter(seq_id == 12), 
+g_example = plot_hsmm_seq(X = Xb %>% filter(seq_id == 13), # 3, 7
                           model = R_hsmm, 
                           compact_view = TRUE,
                           add_color_legend_in_compact_view = FALSE,
@@ -469,5 +476,37 @@ ggsave(fig4_file,
 
 
 ```
+
+```{r export-figures-tiff}
+
+fig1_file = str_c(fig_path, "fig1.pdf")
+ggsave(fig1_file,
+       plot = fig1,
+       width = 18, height = 10, units = "cm",
+       dpi = 300,
+       scale = scale)
+
+fig2_file = str_c(fig_path, "fig2.pdf")
+ggsave(fig2_file,
+       plot = fig2,
+       width = 18, height = 15, units = "cm",
+       dpi = 300,
+       scale = scale)
+
+fig3_file = str_c(fig_path, "fig3.pdf")
+ggsave(fig3_file,
+       plot = fig3,
+       width = 18, height = 18, units = "cm",
+       dpi = 300,
+       scale = scale)
+
+fig4_file = str_c(fig_path, "fig4.pdf")
+ggsave(fig4_file,
+       plot = fig4,
+       width = 18, height = 11, units = "cm",
+       dpi = 300,
+       scale = scale)
+```
+
 
 
